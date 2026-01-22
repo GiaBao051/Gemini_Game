@@ -5,6 +5,8 @@ import uuid
 from typing import Any, Dict
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
+from pathlib import Path
 from fastapi.middleware.cors import CORSMiddleware
 
 from game import RoomManager
@@ -27,6 +29,12 @@ app.add_middleware(
 @app.get("/health")
 def health():
     return {"ok": True}
+
+@app.get("/")
+def client():
+    """Serve the web client UI."""
+    here = Path(__file__).resolve().parent
+    return FileResponse(here / "web_client_v2.html")
 
 def _safe_json_loads(raw: str) -> Dict[str, Any]:
     try:

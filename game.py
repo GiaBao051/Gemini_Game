@@ -8,7 +8,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from maze import generate_maze, mutate_maze_for_return, T_WALL, T_FLOOR, T_QUIZ
+from maze import generate_maze, mutate_maze_for_return, mutate_obstacles_dynamic, T_WALL, T_FLOOR, T_QUIZ
 from algorithms.csp_placement import solve_csp_placement, bfs_dist, INF
 from algorithms.coloring import build_quiz_graph, greedy_coloring
 from algorithms.hungarian import hungarian, pad_to_square
@@ -52,6 +52,11 @@ class GameRoom:
         self.w = 31
         self.h = 21
         self.seed = random.randint(1, 10**9)
+        self.map_rev: int = 0
+        # Dynamic obstacle settings (continuous changes)
+        self.obstacle_interval_s: float = 1.5  # seconds
+        self.obstacle_flips: int = 18
+        self._last_obstacle_mutation: float = time.time()
 
         # --- Build a playable map with CSP placement (retry if needed) ---
         self.grid = None
@@ -193,6 +198,7 @@ class GameRoom:
                 "starts": {pid: list(p.start) for pid, p in self.players.items()},
                 "treasure": list(self.treasure_pos),
                 "quiz": [list(p) for p in self.quiz_positions],
+                "rev": self.map_rev,
             },
             "state": self._state_dict(),
         }
@@ -235,6 +241,9 @@ class GameRoom:
 
                 # Resolve interactions
                 await self._resolve()
+
+                # Dynamic obstacles
+                await self._maybe_mutate_obstacles()
 
                 # Broadcast state
                 await self.broadcast({
@@ -392,6 +401,7 @@ class GameRoom:
             "carrier": self.carrier_id,
             "players": {pid: self._player_view(p) for pid, p in self.players.items()},
             "treasure": list(self.treasure_pos),
+            "map_rev": self.map_rev,
         }
 
 

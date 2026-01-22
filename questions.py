@@ -24,9 +24,6 @@ class QuestionBank:
 
     def sample_questions(self, category: str, count: int) -> List[Question]:
         cand = [q for q in self.pool if q["category"] == category]
-        if not cand:
-            # fallback: use entire pool if category missing
-            cand = self.pool[:]
         if len(cand) < count:
             # fallback: cho phép lặp nếu thiếu
             return [self.rnd.choice(cand) for _ in range(count)]

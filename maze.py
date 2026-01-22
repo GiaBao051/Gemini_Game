@@ -1,7 +1,7 @@
 # maze.py
 from __future__ import annotations
 import random
-from typing import List, Tuple
+from typing import List, Tuple, Set, Optional
 
 Grid = List[List[int]]
 
@@ -12,10 +12,7 @@ T_QUIZ = 2
 
 
 def generate_maze(w: int, h: int, seed: int) -> Grid:
-    """
-    Randomized DFS maze on odd-dimension grid. Simple MVP.
-    Walls=1, Floors=0.
-    """
+    """Randomized DFS maze on odd-dimension grid. Walls=1, Floors=0."""
     rnd = random.Random(seed)
     grid: Grid = [[T_WALL for _ in range(w)] for _ in range(h)]
 
@@ -29,16 +26,12 @@ def generate_maze(w: int, h: int, seed: int) -> Grid:
                 grid[y + dy // 2][x + dx // 2] = T_FLOOR
                 carve(nx, ny)
 
-    # Ensure odd dimensions for best maze structure (you already use 31x21, OK)
     carve(1, 1)
     return grid
 
 
 def mutate_maze_for_return(grid: Grid, from_pos: Tuple[int, int], to_pos: Tuple[int, int]) -> Grid:
-    """
-    MVP mutate: carve a Manhattan corridor from from_pos to to_pos, and do small random toggles.
-    Keeps QUIZ tiles intact.
-    """
+    """Carve a Manhattan corridor from from_pos to to_pos + small random toggles. Keeps QUIZ tiles."""
     new = [row[:] for row in grid]
     fx, fy = from_pos
     tx, ty = to_pos
@@ -72,5 +65,51 @@ def mutate_maze_for_return(grid: Grid, from_pos: Tuple[int, int], to_pos: Tuple[
             new[ry][rx] = T_FLOOR
         elif new[ry][rx] == T_FLOOR and rnd.random() < 0.15:
             new[ry][rx] = T_WALL
+
+    return new
+
+
+def mutate_obstacles_dynamic(
+    grid: Grid,
+    protected: Set[Tuple[int, int]],
+    flips: int = 18,
+    seed: Optional[int] = None,
+) -> Grid:
+    """
+    Continuously-changing obstacles:
+    - Randomly flip some floor<->wall tiles (never QUIZ, never border, never protected).
+    - Caller should validate connectivity before accepting.
+    """
+    rnd = random.Random(seed)
+    new = [row[:] for row in grid]
+    h = len(new)
+    w = len(new[0])
+
+    floors = []
+    walls = []
+    for y in range(1, h - 1):
+        for x in range(1, w - 1):
+            if (x, y) in protected:
+                continue
+            if new[y][x] == T_QUIZ:
+                continue
+            if new[y][x] == T_FLOOR:
+                floors.append((x, y))
+            elif new[y][x] == T_WALL:
+                walls.append((x, y))
+
+    rnd.shuffle(floors)
+    rnd.shuffle(walls)
+
+    open_n = min(len(walls), flips // 2)
+    close_n = min(len(floors), flips - open_n)
+
+    for i in range(open_n):
+        x, y = walls[i]
+        new[y][x] = T_FLOOR
+
+    for i in range(close_n):
+        x, y = floors[i]
+        new[y][x] = T_WALL
 
     return new
