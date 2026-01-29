@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Maze Duel Online - Bản Ổn Định</title>
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore-compat.js"></script>
+
+    <style>
+        :root {
+            --bg-color: #121422;
+            --wall-color: #233796;
+            --dyn-wall-color: #3755d2;
+            --floor-color: #0e1223;
+            --text-color: #ffffff;
+            --accent-color: #ffd700;
+        }
+
+        body {
+            margin: 0; padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            display: flex; flex-direction: column; align-items: center;
+            height: 100vh; touch-action: none;
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            margin-top: 10px;
+        }
+
+        canvas {
+            display: block;
+            background-color: var(--floor-color);
+            border-radius: 4px;
+            max-width: 100vw; max-height: 80vh;
+        }
+
+        /* HUD */
+        #hud {
+            width: 100%; padding: 10px;
+            background-color: #121422; text-align: center;
+            border-top: 1px solid #333; z-index: 10;
+        }
+        .hud-primary { font-weight: bold; font-size: 16px; margin-bottom: 4px; }
+        .hud-secondary { font-size: 12px; color: #b4c8ff; }
+
+        /* LOBBY UI */
+        #lobby-screen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: var(--bg-color);
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            z-index: 200;
+        }
+
+        .lobby-box {
+            background: #1e2235; padding: 25px; border-radius: 12px;
+            text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            border: 1px solid #466eff; width: 340px; max-width: 95%;
+        }
+
+        .warning-banner {
+            background: #ff4444; color: white; padding: 10px;
+            border-radius: 6px; font-size: 13px; margin-bottom: 15px;
+            display: none; border: 2px solid #ffaaaa;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse { 0% {opacity:1;} 50% {opacity:0.8;} 100% {opacity:1;} }
+
+        input {
+            padding: 12px; font-size: 24px; width: 200px;
+            text-align: center; border-radius: 6px; border: 2px solid #444;
+            margin: 10px 0; text-transform: uppercase;
+            background: #fff; color: #333; font-weight: bold; letter-spacing: 3px;
+        }
+        
+        button {
+            padding: 14px; font-size: 16px; border: none; border-radius: 6px;
+            cursor: pointer; margin: 5px 0; font-weight: bold; width: 100%;
+        }
+        .btn-create { background: #466eff; color: white; }
+        .btn-join { background: #50e678; color: #0e1223; }
+        button:disabled { background: #555 !important; opacity: 0.7; }
+
+        #lobby-error { color: #ff5050; margin-top: 10px; font-weight: bold; min-height: 20px; }
+        
+        #server-info {
+            font-size: 11px; color: #666; margin-top: 15px;
+            border-top: 1px solid #333; padding-top: 5px; width: 100%;
+        }
+
+        /* MOBILE CONTROLS */
+        #mobile-controls {
+            display: none; position: absolute; bottom: 20px; right: 20px;
+            width: 160px; height: 160px; z-index: 50;
+        }
+        @media (max-width: 1024px) { #mobile-controls { display: block; } }
+
+        .dpad-btn {
+            position: absolute; width: 55px; height: 55px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            display: flex; justify-content: center; align-items: center;
+            font-size: 24px; color: white; user-select: none;
+        }
+        .dpad-btn:active { background: rgba(80, 230, 120, 0.5); border-color: #50e678; }
+        .btn-up { top: 0; left: 52px; }
+        .btn-down { bottom: 0; left: 52px; }
+        .btn-left { top: 52px; left: 0; }
+        .btn-right { top: 52px; right: 0; }
+
+        /* MODALS */
+        .modal-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85); display: flex; justify-content: center; align-items: center;
+            z-index: 100; opacity: 0; pointer-events: none; transition: opacity 0.2s;
+        }
+        .modal-overlay.active { opacity: 1; pointer-events: all; }
+        .modal-box {
+            background: #fff; color: #333; width: 350px; padding: 20px;
+            border-radius: 12px; text-align: center; border: 4px solid #466eff;
+        }
+        .options-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 15px;}
+        .btn-option {
+            background: #f0f0f0; border: 1px solid #999; padding: 12px;
+            font-size: 16px; cursor: pointer; border-radius: 6px;
+        }
+
+        #waiting-msg { display: none; margin-top: 20px; }
+        .room-code-display {
+            font-size: 40px; color: #50e678; letter-spacing: 5px; font-weight: 900;
+            border: 3px dashed #444; margin: 15px 0; padding: 10px; background: #111;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="lobby-screen">
+        <div class="lobby-box">
+            <h2 style="color:white; margin:0 0 15px 0;">MAZE DUEL ONLINE</h2>
+            
+            <div id="env-warning" class="warning-banner">
+                ⚠️ CẢNH BÁO: Bạn đang chạy trong Chat AI.<br>
+                Sẽ KHÔNG THỂ kết nối với máy khác.<br>
+                Vui lòng tải file .html về máy và mở lên!
+            </div>
+
+            <div id="main-menu">
+                <button id="btn-create" class="btn-create" onclick="createRoom()" disabled>TẠO PHÒNG MỚI</button>
+                <div style="color:#666; margin: 10px 0; font-size: 13px;">- HOẶC NHẬP MÃ -</div>
+                <input type="text" id="room-code-input" placeholder="ABCDE" maxlength="5" autocomplete="off">
+                <button id="btn-join" class="btn-join" onclick="joinRoom()" disabled>VÀO PHÒNG NGAY</button>
+            </div>
+
+            <div id="waiting-msg">
+                <div style="color:#ffd700; margin-bottom:5px;">Đang chờ người chơi thứ 2...</div>
+                <div style="font-size:13px; color:#aaa;">Đưa mã này cho bạn bè:</div>
+                <div id="display-room-code" class="room-code-display"></div>
+                <button onclick="location.reload()" style="background:#444; color:#ccc; font-size:12px; padding:8px;">Hủy bỏ</button>
+            </div>
+
+            <div id="lobby-error"></div>
+            <div id="auth-status" style="font-size:12px; color:#aaa; margin-top:10px;">Đang kết nối Server...</div>
+            <div id="server-info">Kiểm tra môi trường...</div>
+        </div>
+    </div>
+
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <!-- Quiz -->
+        <div id="quiz-modal" class="modal-overlay">
+            <div class="modal-box">
+                <div style="font-size:18px; color:#2850c8; font-weight:bold;">CÂU HỎI</div>
+                <div id="quiz-question" style="font-size:22px; font-weight:bold; margin:15px 0;">...</div>
+                <div id="quiz-options" class="options-grid"></div>
+                <div id="quiz-feedback" style="margin-top:10px; font-weight:bold; height:20px;"></div>
+            </div>
+        </div>
+        <!-- End -->
+        <div id="end-screen" class="modal-overlay">
+            <div class="modal-box" style="background: #111; border-color: #ffd700;">
+                <div id="winner-text" style="font-size:28px; color:#ffd700; margin-bottom:20px;"></div>
+                <button class="btn-create" onclick="location.reload()">Về Sảnh</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="hud">
+        <div id="hud-status" class="hud-primary">Đang tải...</div>
+        <div id="hud-sub" class="hud-secondary"></div>
+    </div>
+
+    <div id="mobile-controls">
+        <div class="dpad-btn btn-up" ontouchstart="handleTouch('U')" onmousedown="handleTouch('U')">▲</div>
+        <div class="dpad-btn btn-down" ontouchstart="handleTouch('D')" onmousedown="handleTouch('D')">▼</div>
+        <div class="dpad-btn btn-left" ontouchstart="handleTouch('L')" onmousedown="handleTouch('L')">◀</div>
+        <div class="dpad-btn btn-right" ontouchstart="handleTouch('R')" onmousedown="handleTouch('R')">▶</div>
+    </div>
+
+<script>
+/** MAZE DUEL ONLINE - STABLE VERSION **/
+
+// 1. CONFIG FIREBASE
+const firebaseConfig = JSON.parse(__firebase_config || '{}');
+// Logic quan trọng: Xác định đang chạy ở đâu
+const isPrivateEnv = typeof __app_id !== 'undefined';
+const appId = isPrivateEnv ? __app_id : 'demo-app'; // 'demo-app' là ID chung cho mọi máy tải về
+
+if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+// 2. DOM & VARS
+const lobbyScreen = document.getElementById('lobby-screen');
+const warningBanner = document.getElementById('env-warning');
+const serverInfo = document.getElementById('server-info');
+const btnCreate = document.getElementById('btn-create');
+const btnJoin = document.getElementById('btn-join');
+const lobbyError = document.getElementById('lobby-error');
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+let myUserId = null;
+let currentRoomId = null;
+let isHost = false;
+let roomRef = null;
+let unsubscribeRoom = null;
+let gameState = 'LOBBY';
+
+// Game constants
+const MAP_W = 41, MAP_H = 25;
+let TILE_SIZE = 16;
+const COLORS = { WALL: '#233796', DYN: '#3755d2', FLOOR: '#0e1223', RED: '#ff5050', GREEN: '#50e678', YELLOW: '#ffd700', MON: '#ff8c00' };
+const T_FLOOR=0, T_WALL=1, T_QUIZ=2;
+
+// State
+let localMap=[], baseMap=[], dynCells=[], dynColor={}, dynPhase=0, dynK=1;
+let players = {
+    p1: {x:1, y:1, color: COLORS.RED, has: false},
+    p2: {x:MAP_W-2, y:MAP_H-2, color: COLORS.GREEN, has: false}
+};
+let monsters=[], treasurePos=null, myRole=null;
+let lastMove=0, lastPhase=0;
+
+// 3. AUTH & INIT
+const initAuth = async () => {
+    // Check Env
+    if (isPrivateEnv) {
+        warningBanner.style.display = 'block';
+        serverInfo.innerHTML = `<span style="color:red">Kênh: RIÊNG TƯ (${appId.substr(0,6)}...)</span>`;
+    } else {
+        serverInfo.innerHTML = `<span style="color:#50e678">Kênh: CÔNG KHAI (Global)</span>`;
+    }
+
+    // Login
+    try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            await auth.signInWithCustomToken(__initial_auth_token);
+        } else {
+            await auth.signInAnonymously();
+        }
+    } catch(e) { console.error(e); }
+
+    auth.onAuthStateChanged(u => {
+        if(u) {
+            myUserId = u.uid;
+            document.getElementById('auth-status').innerHTML = `<span style="color:#50e678">● Đã kết nối</span>`;
+            btnCreate.disabled = false;
+            btnJoin.disabled = false;
+        }
+    });
+    resizeCanvas();
+};
+initAuth();
+
+// 4. LOBBY FUNCTIONS
+async function createRoom() {
+    if(isPrivateEnv && !confirm("Cảnh báo: Bạn đang ở chế độ RIÊNG TƯ. Người khác sẽ KHÔNG THỂ vào phòng này. Bạn có chắc muốn tạo để test một mình không?")) return;
+    
+    btnCreate.disabled = true; btnJoin.disabled = true;
+    const code = Math.random().toString(36).substring(2, 7).toUpperCase();
+    
+    // Gen Data
+    baseMap = generateMaze(MAP_W, MAP_H);
+    let treasure = {x: Math.floor(MAP_W/2), y: Math.floor(MAP_H/2)};
+    let dyn = buildDynamicSystem(baseMap, {x:1,y:1}, {x:MAP_W-2,y:MAP_H-2}, treasure);
+
+    const roomData = {
+        host: myUserId, code: code, status: 'WAITING',
+        map: baseMap.flat(),
+        p1: {id: myUserId, x:1, y:1, has: false},
+        p2: {id: null, x:MAP_W-2, y:MAP_H-2, has: false},
+        mons: [{x:treasure.x, y:treasure.y}], // Spawn at treasure initially
+        tr: treasure,
+        dyn: { cells: dyn.cells.map(c=>c.x+c.y*MAP_W), cols: JSON.stringify(dyn.colors), k: dyn.k, ph: 0 },
+        ts: firebase.firestore.FieldValue.serverTimestamp()
+    };
+
+    roomRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('rooms').doc(code);
+    await roomRef.set(roomData);
+    
+    currentRoomId = code; isHost = true; myRole = 'p1';
+    showWaiting(code);
+    subscribeToRoom();
+}
+
+async function joinRoom() {
+    let code = document.getElementById('room-code-input').value.trim().toUpperCase().replace(/\s/g,'');
+    if(code.length < 5) return lobbyError.innerText = "Mã phòng không hợp lệ";
+    
+    btnJoin.disabled = true; lobbyError.innerText = "Đang tìm...";
+    roomRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('rooms').doc(code);
+    
+    let doc = await roomRef.get();
+    if(!doc.exists) {
+        btnJoin.disabled = false;
+        return lobbyError.innerText = `Không tìm thấy phòng ${code}! Kiểm tra xem 2 máy có cùng 'Kênh' không.`;
+    }
+    
+    let d = doc.data();
+    if(d.status !== 'WAITING' && d.p2.id !== myUserId && d.host !== myUserId) {
+        btnJoin.disabled = false; return lobbyError.innerText = "Phòng đã đầy!";
+    }
+
+    if(d.host !== myUserId) {
+        await roomRef.update({ 'p2.id': myUserId, status: 'PLAYING' });
+        myRole = 'p2'; isHost = false;
+    } else {
+        myRole = 'p1'; isHost = true; // Rejoin as host
+    }
+
+    currentRoomId = code;
+    subscribeToRoom();
+}
+
+function showWaiting(code) {
+    document.getElementById('main-menu').style.display='none';
+    document.getElementById('waiting-msg').style.display='block';
+    document.getElementById('display-room-code').innerText = code;
+}
+
+function subscribeToRoom() {
+    unsubscribeRoom = roomRef.onSnapshot(doc => {
+        if(!doc.exists) return;
+        let d = doc.data();
+
+        // Sync State
+        players.p1.x = d.p1.x; players.p1.y = d.p1.y; players.p1.has = d.p1.has;
+        if(d.p2.id) { players.p2.x = d.p2.x; players.p2.y = d.p2.y; players.p2.has = d.p2.has; }
+        monsters = d.mons || []; treasurePos = d.tr; dynPhase = d.dyn.ph;
+
+        // Init Map if needed
+        if(baseMap.length === 0 && d.map) {
+            for(let i=0; i<d.map.length; i++) {
+                let y=Math.floor(i/MAP_W), x=i%MAP_W;
+                if(!baseMap[y]) baseMap[y]=[];
+                baseMap[y][x] = d.map[i];
+            }
+            localMap = JSON.parse(JSON.stringify(baseMap));
+            dynK = d.dyn.k; dynColor = JSON.parse(d.dyn.cols);
+            dynCells = d.dyn.cells.map(i => ({x:i%MAP_W, y:Math.floor(i/MAP_W)}));
+            resizeCanvas();
+        }
+
+        if(d.status === 'PLAYING') {
+            lobbyScreen.style.display = 'none';
+            gameState = 'PLAYING';
+            // Host spawns monsters if needed
+            if(isHost && monsters.length < 2) {
+                let m = spawnMonsters(4);
+                roomRef.update({ mons: m });
+            }
+            applyDyn();
+        }
+        
+        if(d.status.startsWith('GAMEOVER')) {
+            let win = d.status.split('_')[1];
+            document.getElementById('winner-text').innerText = `NGƯỜI CHƠI ${win==='P1'?'ĐỎ':'XANH'} THẮNG!`;
+            document.getElementById('end-screen').classList.add('active');
+        }
+    });
+}
+
+// 5. GAME LOGIC
+function applyDyn() {
+    if(!baseMap.length) return;
+    if(localMap.length !== baseMap.length) localMap = new Array(baseMap.length).fill(0);
+    
+    // Reset & Apply
+    for(let y=0; y<MAP_H; y++) {
+        if(!localMap[y]) localMap[y]=[];
+        for(let x=0; x<MAP_W; x++) localMap[y][x] = baseMap[y][x];
+    }
+    
+    let safe = new Set([`${players.p1.x},${players.p1.y}`, `${players.p2.x},${players.p2.y}`]);
+    if(treasurePos) safe.add(`${treasurePos.x},${treasurePos.y}`);
+    monsters.forEach(m => safe.add(`${m.x},${m.y}`));
+
+    dynCells.forEach(c => {
+        if(!safe.has(`${c.x},${c.y}`) && dynColor[`${c.x},${c.y}`] === dynPhase) 
+            localMap[c.y][c.x] = T_WALL;
+    });
+}
+
+function move(dx, dy) {
+    if(gameState !== 'PLAYING') return;
+    let me = players[myRole];
+    let nx = me.x+dx, ny = me.y+dy;
+    
+    if(nx<0||nx>=MAP_W||ny<0||ny>=MAP_H) return;
+    if(localMap[ny][nx] === T_WALL) return;
+
+    // Logic updates
+    let up = {};
+    up[`${myRole}.x`] = nx; up[`${myRole}.y`] = ny;
+    
+    // Treasure
+    if(treasurePos && nx===treasurePos.x && ny===treasurePos.y) {
+        up['tr'] = null; up[`${myRole}.has`] = true;
+        document.getElementById('hud-sub').innerText = "ĐÃ CÓ KHO BÁU! VỀ NHÀ!";
+    }
+    
+    // Steal
+    let oppRole = myRole==='p1'?'p2':'p1';
+    let opp = players[oppRole];
+    if(nx===opp.x && ny===opp.y && !me.has && opp.has) {
+        up[`${myRole}.has`] = true; up[`${oppRole}.has`] = false;
+        up[`${oppRole}.x`] = (oppRole==='p1'?1:MAP_W-2);
+        up[`${oppRole}.y`] = (oppRole==='p1'?1:MAP_H-2);
+    }
+    
+    roomRef.update(up);
+}
+
+// Host Loop
+setInterval(() => {
+    if(!isHost || gameState !== 'PLAYING') return;
+    let now = Date.now();
+    let up = {}; let chg = false;
+
+    // Dyn
+    if(now - lastPhase > 850) {
+        up['dyn.ph'] = (dynPhase + 1) % dynK;
+        lastPhase = now; chg = true;
+    }
+    // Monsters
+    if(now - lastMove > 220) {
+        let nm = monsters.map(m => {
+            let p1=players.p1, p2=players.p2;
+            let t = (Math.abs(p1.x-m.x)+Math.abs(p1.y-m.y) < 6) ? p1 : 
+                    (Math.abs(p2.x-m.x)+Math.abs(p2.y-m.y) < 6) ? p2 : null;
+            
+            if(t) {
+                if(t.x>m.x) return {x:m.x+1,y:m.y}; if(t.x<m.x) return {x:m.x-1,y:m.y};
+                if(t.y>m.y) return {x:m.x,y:m.y+1}; return {x:m.x,y:m.y-1};
+            }
+            // Random valid
+            let opts = [{x:m.x+1,y:m.y},{x:m.x-1,y:m.y},{x:m.x,y:m.y+1},{x:m.x,y:m.y-1}];
+            let valid = opts.filter(o=> o.x>0 && o.x<MAP_W && o.y>0 && o.y<MAP_H && localMap[o.y][o.x]===T_FLOOR);
+            return valid.length ? valid[Math.floor(Math.random()*valid.length)] : m;
+        });
+        
+        // Hit check
+        nm.forEach(m => {
+            ['p1','p2'].forEach(pid => {
+                let p = players[pid];
+                if(m.x===p.x && m.y===p.y) {
+                    if(p.has) { up['tr']={x:p.x,y:p.y}; up[`${pid}.has`]=false; }
+                    up[`${pid}.x`] = (pid==='p1'?1:MAP_W-2);
+                    up[`${pid}.y`] = (pid==='p1'?1:MAP_H-2);
+                    chg = true;
+                }
+            });
+        });
+        up['mons'] = nm;
+        lastMove = now; chg = true;
+    }
+    
+    // Win
+    if(players.p1.has && players.p1.x===1 && players.p1.y===1) { up['status']='GAMEOVER_P1'; chg=true; }
+    if(players.p2.has && players.p2.x===MAP_W-2 && players.p2.y===MAP_H-2) { up['status']='GAMEOVER_P2'; chg=true; }
+
+    if(chg) roomRef.update(up);
+}, 200);
+
+// 6. RENDER & UTILS
+function draw() {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    if(!localMap.length) return requestAnimationFrame(draw);
+
+    for(let y=0; y<MAP_H; y++) for(let x=0; x<MAP_W; x++) {
+        if(!localMap[y]) continue;
+        let t = localMap[y][x]; let px=x*TILE_SIZE, py=y*TILE_SIZE;
+        if(t===T_WALL) {
+            let isDyn = dynCells.some(c=>c.x===x && c.y===y);
+            ctx.fillStyle = isDyn ? COLORS.DYN : COLORS.WALL;
+            ctx.fillRect(px,py,TILE_SIZE,TILE_SIZE);
+        } else {
+            ctx.strokeStyle = '#1a2238'; ctx.strokeRect(px,py,TILE_SIZE,TILE_SIZE);
+        }
+    }
+    
+    // Entities
+    if(treasurePos) {
+        let tx=treasurePos.x*TILE_SIZE+TILE_SIZE/2, ty=treasurePos.y*TILE_SIZE+TILE_SIZE/2;
+        ctx.fillStyle=COLORS.YELLOW; ctx.beginPath(); ctx.arc(tx,ty,TILE_SIZE/3,0,6.28); ctx.fill();
+    }
+    ['p1','p2'].forEach(id => {
+        let p=players[id];
+        ctx.fillStyle = p.color; ctx.fillRect(p.x*TILE_SIZE+2, p.y*TILE_SIZE+2, TILE_SIZE-4, TILE_SIZE-4);
+        if(p.has) { ctx.strokeStyle=COLORS.YELLOW; ctx.lineWidth=2; ctx.strokeRect(p.x*TILE_SIZE+2, p.y*TILE_SIZE+2, TILE_SIZE-4, TILE_SIZE-4); }
+    });
+    monsters.forEach(m => {
+        ctx.fillStyle=COLORS.MON; ctx.beginPath(); 
+        ctx.arc(m.x*TILE_SIZE+TILE_SIZE/2, m.y*TILE_SIZE+TILE_SIZE/2, TILE_SIZE/3, 0, 6.28); ctx.fill();
+    });
+
+    if(gameState==='PLAYING') document.getElementById('hud-status').innerText = `PHÒNG: ${currentRoomId} - BẠN LÀ ${myRole==='p1'?'ĐỎ':'XANH'}`;
+    requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+
+// Maze Gen Utils
+function generateMaze(w,h) {
+    let g=Array(h).fill().map(()=>Array(w).fill(T_WALL));
+    for(let y=1;y<h;y+=2)for(let x=1;x<w;x+=2)g[y][x]=T_FLOOR;
+    let s=[{x:1,y:1}], v=new Set(['1,1']);
+    while(s.length){
+        let {x,y}=s[s.length-1], n=[];
+        [[2,0],[-2,0],[0,2],[0,-2]].forEach(([dx,dy])=>{
+            let nx=x+dx,ny=y+dy;
+            if(nx>0&&nx<w-1&&ny>0&&ny<h-1&&!v.has(`${nx},${ny}`)) n.push({nx,ny,dx,dy});
+        });
+        if(n.length){
+            let c=n[Math.floor(Math.random()*n.length)];
+            g[y+c.dy/2][x+c.dx/2]=T_FLOOR; v.add(`${c.nx},${c.ny}`); s.push({x:c.nx,y:c.ny});
+        }else s.pop();
+    }
+    // Loops
+    for(let i=0;i<40;i++) {
+        let y=Math.floor(Math.random()*(h-2))+1, x=Math.floor(Math.random()*(w-2))+1;
+        if(g[y][x]===T_WALL) {
+            if((g[y-1][x]===0&&g[y+1][x]===0)||(g[y][x-1]===0&&g[y][x+1]===0)) g[y][x]=0;
+        }
+    }
+    return g;
+}
+
+function buildDynamicSystem(g,p1,p2,tr) {
+    let f=[], a=new Set([`${p1.x},${p1.y}`,`${p2.x},${p2.y}`,`1,1`,`${MAP_W-2},${MAP_H-2}`,`${tr.x},${tr.y}`]);
+    for(let y=0;y<MAP_H;y++)for(let x=0;x<MAP_W;x++) if(g[y][x]===0 && !a.has(`${x},${y}`)) f.push({x,y});
+    f.sort(()=>Math.random()-0.5);
+    let cells = f.slice(0,90), cols={}, maxC=0;
+    
+    // Simple Greedy
+    cells.forEach(c => {
+        let used = new Set();
+        [[0,1],[0,-1],[1,0],[-1,0]].forEach(([dx,dy])=>{
+            let k=`${c.x+dx},${c.y+dy}`; if(cols[k]!==undefined) used.add(cols[k]);
+        });
+        let cl=0; while(used.has(cl)) cl++;
+        cols[`${c.x},${c.y}`]=cl; if(cl>maxC)maxC=cl;
+    });
+    return {cells, colors:cols, k:maxC+1};
+}
+
+function spawnMonsters(c) {
+    let f=[]; for(let y=0;y<MAP_H;y++)for(let x=0;x<MAP_W;x++) if(baseMap[y][x]===0) f.push({x,y});
+    f.sort(()=>Math.random()-0.5); return f.slice(0,c);
+}
+
+// Controls
+window.addEventListener('keydown', e=>{
+    if(e.key.includes('Up')||e.key==='w') move(0,-1);
+    if(e.key.includes('Down')||e.key==='s') move(0,1);
+    if(e.key.includes('Left')||e.key==='a') move(-1,0);
+    if(e.key.includes('Right')||e.key==='d') move(1,0);
+});
+function handleTouch(d){
+    if(d==='U')move(0,-1); if(d==='D')move(0,1); if(d==='L')move(-1,0); if(d==='R')move(1,0);
+    if(event.type==='touchstart')event.preventDefault();
+}
+function resizeCanvas(){
+    let w=window.innerWidth-20, h=window.innerHeight-100;
+    TILE_SIZE = Math.max(8, Math.min(Math.floor(w/MAP_W), Math.floor(h/MAP_H)));
+    canvas.width = MAP_W*TILE_SIZE; canvas.height = MAP_H*TILE_SIZE;
+}
+window.addEventListener('resize', resizeCanvas);
+</script>
+</body>
+</html>

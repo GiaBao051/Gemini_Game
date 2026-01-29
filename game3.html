@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Maze Duel P2P - Final Fix</title>
+    <!-- PeerJS CDN -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+
+    <style>
+        :root {
+            --bg: #121422; --wall: #233796; --floor: #0e1223;
+            --p1: #ff5050; --p2: #50e678; --gold: #ffd700; --purple: #aa50ff;
+        }
+        body {
+            margin: 0; background: var(--bg); color: white;
+            font-family: 'Segoe UI', sans-serif; overflow: hidden;
+            display: flex; flex-direction: column; align-items: center; height: 100vh;
+            touch-action: none; user-select: none;
+        }
+        
+        /* LOBBY STYLES */
+        #lobby {
+            position: absolute; top:0; left:0; width:100%; height:100%;
+            background: var(--bg); z-index: 100;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+        }
+        .box {
+            background: #1e2235; padding: 30px; border-radius: 12px;
+            border: 1px solid #466eff; text-align: center; width: 340px; max-width: 90%;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+        }
+        input {
+            padding: 12px; font-size: 20px; width: 220px; text-align: center;
+            margin: 10px 0; border-radius: 6px; border: 1px solid #555;
+            background: #fff; color: #000; font-weight: bold; letter-spacing: 2px; text-transform: uppercase;
+        }
+        button {
+            padding: 14px; width: 100%; margin: 8px 0; border-radius: 6px;
+            border: none; cursor: pointer; font-weight: bold; font-size: 16px; transition: 0.2s;
+        }
+        button:disabled { background: #555 !important; cursor: not-allowed; opacity: 0.7; }
+        .btn-host { background: #466eff; color: white; }
+        .btn-join { background: #50e678; color: #0e1223; }
+        .btn-host:hover, .btn-join:hover { filter: brightness(1.1); transform: translateY(-1px); }
+
+        .id-display {
+            font-size: 32px; color: var(--gold); font-weight: 900;
+            border: 3px dashed #666; padding: 15px; margin: 15px 0; 
+            background: #000; letter-spacing: 3px;
+        }
+        
+        #status-msg { color: #aaa; margin-bottom: 10px; font-size: 13px; }
+        #error-msg { color: #ff5050; font-weight: bold; margin-top: 10px; min-height: 20px;}
+
+        /* GAME UI */
+        canvas { background: var(--floor); border-radius: 4px; max-width: 100vw; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+        #hud { 
+            margin-top: 10px; text-align: center; width: 100%;
+            display: flex; flex-direction: column; align-items: center; 
+        }
+        .hud-main { font-size: 18px; font-weight: bold; color: var(--gold); }
+        .hud-sub { font-size: 13px; color: #aaa; margin-top: 4px; }
+
+        /* QUIZ MODAL */
+        .modal-overlay {
+            position: absolute; top:0; left:0; width:100%; height:100%;
+            background: rgba(0,0,0,0.85); z-index: 200; display: none;
+            justify-content: center; align-items: center;
+        }
+        .modal-box {
+            background: white; color: #333; width: 350px; padding: 20px;
+            border-radius: 12px; text-align: center; border: 4px solid #466eff;
+        }
+        .quiz-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 15px; }
+        .q-btn {
+            background: #f0f0f0; border: 1px solid #ccc; padding: 15px;
+            font-size: 18px; cursor: pointer; border-radius: 6px; color: #333;
+        }
+        .q-btn:active { background: #ddd; }
+
+        /* CONTROLS */
+        #controls {
+            display: none; position: absolute; bottom: 20px; right: 20px; width: 160px; height: 160px;
+        }
+        @media (max-width: 1024px) { #controls { display: block; } }
+        .btn-d {
+            position: absolute; width: 55px; height: 55px; background: rgba(255,255,255,0.1);
+            border-radius: 50%; display: flex; justify-content: center; align-items: center;
+            user-select: none; border: 2px solid rgba(255,255,255,0.2); font-size: 24px;
+        }
+        .b-u { top:0; left:52px; } .b-d { bottom:0; left:52px; }
+        .b-l { top:52px; left:0; } .b-r { top:52px; right:0; }
+        .btn-d:active { background: rgba(80, 230, 120, 0.5); border-color: #50e678; }
+
+        #end-screen { display: none; background: rgba(0,0,0,0.95); z-index: 300; }
+    </style>
+</head>
+<body>
+
+    <!-- LOBBY -->
+    <div id="lobby">
+        <div class="box" id="lobby-main">
+            <h2 style="margin-top:0;">MAZE DUEL P2P</h2>
+            <div id="status-msg">Đang kết nối máy chủ...</div>
+            
+            <button id="btn-host" class="btn-host" onclick="hostGame()" disabled>TẠO PHÒNG (HOST)</button>
+            <div style="margin:10px; color:#666; font-size: 12px;">--- HOẶC ---</div>
+            <input type="text" id="join-id" placeholder="NHẬP MÃ (VD: A7X2)" maxlength="5">
+            <button id="btn-join" class="btn-join" onclick="joinGame()" disabled>VÀO PHÒNG</button>
+            
+            <div id="error-msg"></div>
+            <div style="margin-top:20px; font-size:11px; color:#666; border-top:1px solid #333; padding-top:10px;">
+                Chơi tốt nhất trên Chrome/Cốc Cốc máy tính.
+            </div>
+        </div>
+
+        <div class="box" id="lobby-wait" style="display:none;">
+            <h3 style="color:#ffd700">ĐANG CHỜ ĐỐI THỦ...</h3>
+            <p>Gửi Mã Phòng cho bạn bè:</p>
+            <div class="id-display" id="my-id">...</div>
+            <div id="wait-status" style="font-size:12px; color:#aaa; margin-top:10px;">Đang chờ kết nối...</div>
+            <button onclick="location.reload()" style="background:#444; color:#fff; width:50%; margin-top:20px;">Hủy</button>
+        </div>
+    </div>
+
+    <!-- GAME -->
+    <div id="game-ui" style="display:none;">
+        <canvas id="cvs"></canvas>
+        <div id="hud">
+            <div class="hud-main" id="game-msg"></div>
+            <div class="hud-sub" id="sub-msg">Tìm kho báu (Vàng) - Ô tím là Quiz</div>
+        </div>
+    </div>
+
+    <!-- QUIZ -->
+    <div id="quiz-modal" class="modal-overlay">
+        <div class="modal-box">
+            <div style="font-size:18px; color:#2850c8; font-weight:bold;">CÂU HỎI TRẮC NGHIỆM</div>
+            <div id="q-text" style="font-size:24px; font-weight:bold; margin:20px 0;">...</div>
+            <div id="q-opts" class="quiz-opts"></div>
+            <div id="q-feedback" style="margin-top:10px; height:20px; font-weight:bold;"></div>
+        </div>
+    </div>
+
+    <!-- END -->
+    <div id="end-screen" class="modal-overlay">
+        <h1 id="win-msg" style="color:var(--gold); font-size: 40px; margin-bottom: 20px;">...</h1>
+        <button onclick="location.reload()" style="width:200px; padding: 15px;">CHƠI LẠI</button>
+    </div>
+
+    <!-- MOBILE -->
+    <div id="controls">
+        <div class="btn-d b-u" data-key="u">▲</div>
+        <div class="btn-d b-d" data-key="d">▼</div>
+        <div class="btn-d b-l" data-key="l">◀</div>
+        <div class="btn-d b-r" data-key="r">▶</div>
+    </div>
+
+<script>
+// ==========================================
+// 1. CONFIG & GLOBALS
+// ==========================================
+var W = 41, H = 25, TILE = 16;
+var T_FLOOR=0, T_WALL=1, T_QUIZ=2;
+var COLORS = { WALL:'#233796', FLOOR:'#0e1223', RED:'#ff5050', GREEN:'#50e678', YELLOW:'#ffd700', PURPLE:'#aa50ff', MON:'#ff8c00', B_RED:'#780a0a', B_GREEN:'#0a780a' };
+
+var peer=null, conn=null, myId=null, isHost=false, myRole='';
+var map=[], players={}, treasure=null, monsters=[];
+var isQuiz=false, quizCb=null;
+var isLooping = false; 
+
+// Helper to generate short ID (4 chars)
+function genShortId() {
+    var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    var res = '';
+    for(var i=0; i<4; i++) res += chars.charAt(Math.floor(Math.random() * chars.length));
+    return res;
+}
+
+// ==========================================
+// 2. NETWORK (P2P) - SAFE START FIX
+// ==========================================
+function initNet(retryCount = 0) {
+    if(typeof Peer === 'undefined') {
+        document.getElementById('status-msg').innerText = "Lỗi: Không tải được PeerJS!";
+        return;
+    }
+    
+    var customId = genShortId();
+    peer = new Peer(customId, {debug:1});
+    
+    peer.on('open', id => {
+        myId = id;
+        document.getElementById('status-msg').innerText = "✅ Sẵn sàng! ID của bạn: " + id;
+        document.getElementById('status-msg').style.color = "#50e678";
+        document.getElementById('btn-host').disabled = false;
+        document.getElementById('btn-join').disabled = false;
+    });
+    
+    peer.on('error', err => {
+        if(err.type === 'unavailable-id') {
+            if(retryCount < 10) initNet(retryCount + 1);
+            else document.getElementById('error-msg').innerText = "Vui lòng F5 (tạo ID thất bại).";
+        } else {
+            document.getElementById('error-msg').innerText = "Lỗi mạng: " + err.type;
+        }
+    });
+
+    peer.on('connection', c => {
+        if(conn && conn.open) { c.close(); return; }
+        conn = c; 
+        setupConn();
+        isHost=true; myRole='p1';
+        
+        document.getElementById('wait-status').innerText = "Đối thủ đang vào... Đang gửi dữ liệu...";
+        
+        // CRITICAL FIX: Wait for open before starting
+        if(conn.open) {
+            startGame();
+        } else {
+            conn.on('open', () => {
+                startGame();
+            });
+        }
+    });
+}
+setTimeout(initNet, 500);
+
+function hostGame() {
+    document.getElementById('lobby-main').style.display='none';
+    document.getElementById('lobby-wait').style.display='block';
+    document.getElementById('my-id').innerText = myId || '...';
+}
+
+function joinGame() {
+    var id = document.getElementById('join-id').value.trim().toUpperCase();
+    if(!id) return;
+    document.getElementById('btn-join').innerText = "Đang kết nối...";
+    
+    conn = peer.connect(id);
+    
+    conn.on('open', () => {
+        setupConn();
+        isHost=false; myRole='p2';
+        // Don't start game here, wait for INIT from host
+        document.getElementById('status-msg').innerText = "Đã kết nối! Đang đợi chủ phòng...";
+    });
+    
+    conn.on('error', (e) => {
+        document.getElementById('error-msg').innerText = "Lỗi kết nối tới " + id;
+        document.getElementById('btn-join').innerText = "VÀO PHÒNG";
+    });
+    
+    setTimeout(() => {
+        if(!conn || !conn.open) {
+            document.getElementById('btn-join').innerText = "VÀO PHÒNG";
+            document.getElementById('error-msg').innerText = "Không thể kết nối (Timeout). Thử lại!";
+        }
+    }, 8000);
+}
+
+function setupConn() {
+    conn.on('data', d => handleData(d));
+    conn.on('close', () => alert("Mất kết nối!"));
+}
+
+function handleData(d) {
+    if(d.type === 'INIT' || d.type === 'MAP_UPDATE') {
+        map = d.map;
+        if(d.type === 'INIT') {
+            players = d.ply; treasure = d.tr; monsters = d.mons;
+            
+            // Client receives INIT -> Start game loop
+            if(!isHost) {
+                document.getElementById('lobby').style.display='none';
+                document.getElementById('game-ui').style.display='block';
+                resize(); 
+                if(!isLooping) { isLooping=true; loop(); }
+            }
+        }
+        if(d.msg) showHudMsg(d.msg);
+    }
+    if(d.type === 'UPDATE') {
+        players = d.ply; treasure = d.tr; monsters = d.mons;
+        if(d.win) showWin(d.win);
+    }
+    if(d.type === 'MOVE' && isHost) processMove('p2', d.dx, d.dy);
+}
+
+// ==========================================
+// 3. GAME LOGIC (HOST SIDE)
+// ==========================================
+function startGame() {
+    // Gen Init Map
+    map = generateMaze(W, H);
+    var s1={x:1, y:1}, s2={x:W-2, y:H-2};
+    map[s1.y][s1.x] = T_FLOOR; map[s2.y][s2.x] = T_FLOOR;
+    
+    treasure = pickTreasure(map, s1, s2);
+    placeQuiz(map, s1, s2, treasure);
+    
+    players = {
+        p1: {x:1, y:1, c:COLORS.RED, has:false, base:{x:1,y:1}},
+        p2: {x:W-2, y:H-2, c:COLORS.GREEN, has:false, base:{x:W-2,y:H-2}}
+    };
+    monsters = spawnMons(4);
+
+    // FIX: Retry sending INIT if failed
+    sendAll('INIT', {map:map, ply:players, tr:treasure, mons:monsters});
+    
+    // Host UI
+    document.getElementById('lobby').style.display='none';
+    document.getElementById('game-ui').style.display='block';
+    resize(); 
+    if(!isLooping) { isLooping=true; loop(); }
+    
+    // Game Loop - MODIFIED: Slower update rate for monsters
+    setInterval(() => {
+        if(isHost) {
+            updateMons();
+            sendAll('UPDATE', {ply:players, tr:treasure, mons:monsters});
+        }
+    }, 450); // Changed from 200 to 450 (Slower bot speed)
+}
+
+function sendAll(type, data) {
+    if(conn && conn.open) {
+        conn.send({type:type, ...data});
+    } else {
+        // Retry logic for critical messages
+        if (type === 'INIT') {
+            console.log("Connection not ready, retrying INIT...");
+            setTimeout(() => sendAll(type, data), 500);
+        }
+    }
+}
+
+function processMove(role, dx, dy) {
+    var p = players[role];
+    var nx = p.x+dx, ny = p.y+dy;
+    
+    if(nx<0||nx>=W||ny<0||ny>=H) return;
+    if(map[ny][nx] === T_WALL) return;
+    
+    // Handle Quiz (Host verifies: if player says move, and tile was quiz, clear it)
+    if(map[ny][nx] === T_QUIZ) {
+        map[ny][nx] = T_FLOOR; // Clear quiz
+        sendAll('MAP_UPDATE', {map:map}); // Sync map change
+    }
+    
+    p.x = nx; p.y = ny;
+    
+    // Treasure Pickup
+    if(treasure && nx===treasure.x && ny===treasure.y) {
+        treasure = null; p.has = true;
+        // MAP REGEN LOGIC
+        regenerateMapOnPickup(p);
+    }
+    
+    // Steal
+    var opp = role==='p1' ? players.p2 : players.p1;
+    if(nx===opp.x && ny===opp.y && !p.has && opp.has) {
+        p.has = true; opp.has = false;
+        opp.x = opp.base.x; opp.y = opp.base.y; // Send home
+    }
+    
+    // Win
+    if(p.has && nx===p.base.x && ny===p.base.y) {
+        var msg = (role==='p1'?"ĐỎ":"XANH") + " CHIẾN THẮNG!";
+        showWin(msg);
+        sendAll('UPDATE', {ply:players, tr:treasure, mons:monsters, win:msg});
+    }
+}
+
+function regenerateMapOnPickup(holder) {
+    // 1. Generate new map
+    var newMap = generateMaze(W, H, 0.15); // More loops
+    // 2. Preserve paths for players
+    ['p1','p2'].forEach(k => {
+        var pl = players[k];
+        newMap[pl.y][pl.x] = T_FLOOR; // Current pos
+        newMap[pl.base.y][pl.base.x] = T_FLOOR; // Base
+    });
+    
+    // 3. Add new quizzes
+    placeQuiz(newMap, players.p1, players.p2, {x:-1,y:-1}); // Dummy treasure
+    
+    // 4. Ensure connectivity (Simple BFS check, if fail revert? For simplicity, we trust Gen)
+    map = newMap;
+    monsters = spawnMons(4); // Respawn monsters
+    
+    sendAll('MAP_UPDATE', {map:map, mons:monsters, msg:"BẢN ĐỒ ĐÃ THAY ĐỔI! VỀ NHÀ NGAY!"});
+}
+
+function updateMons() {
+    monsters.forEach(m => {
+        var path = bfsPath(map, m, players.p1, players.p2);
+        if(path) { m.x = path.x; m.y = path.y; }
+        else {
+            // Random move
+            var dirs = [[0,1],[0,-1],[1,0],[-1,0]].filter(d=>map[m.y+d[1]][m.x+d[0]]!==T_WALL);
+            if(dirs.length) { var d=dirs[Math.floor(Math.random()*dirs.length)]; m.x+=d[0]; m.y+=d[1]; }
+        }
+        
+        // Hit
+        ['p1','p2'].forEach(k => {
+            var p = players[k];
+            if(m.x===p.x && m.y===p.y) {
+                if(p.has) { p.has=false; treasure={x:p.x, y:p.y}; } // Drop
+                p.x = p.base.x; p.y = p.base.y; // Send base
+            }
+        });
+    });
+}
+
+// ==========================================
+// 4. ALGORITHMS (MAZE & AI)
+// ==========================================
+function generateMaze(w,h, loops=0.1) {
+    var g = Array(h).fill().map(()=>Array(w).fill(T_WALL));
+    for(var y=1;y<h;y+=2)for(var x=1;x<w;x+=2) g[y][x]=T_FLOOR;
+    var s=[{x:1,y:1}], v=new Set(['1,1']);
+    while(s.length){
+        var {x,y}=s[s.length-1], n=[];
+        [[2,0],[-2,0],[0,2],[0,-2]].forEach(([dx,dy])=>{
+            var nx=x+dx,ny=y+dy;
+            if(nx>0&&nx<w-1&&ny>0&&ny<h-1&&!v.has(`${nx},${ny}`)) n.push({nx,ny,dx,dy});
+        });
+        if(n.length){
+            var c=n[Math.floor(Math.random()*n.length)];
+            g[y+c.dy/2][x+c.dx/2]=T_FLOOR; v.add(`${c.nx},${c.ny}`); s.push({x:c.nx,y:c.ny});
+        }else s.pop();
+    }
+    // Loops
+    var walls=[];
+    for(var y=1;y<h-1;y++)for(var x=1;x<w-1;x++) if(g[y][x]===T_WALL) walls.push({x,y});
+    for(var i=0; i<walls.length*loops; i++) {
+        var w = walls[Math.floor(Math.random()*walls.length)];
+        if(w.x>0 && w.x<W-1 && w.y>0 && w.y<H-1) g[w.y][w.x] = T_FLOOR;
+    }
+    return g;
+}
+
+function bfsPath(grid, start, t1, t2) {
+    // BFS to find closest player
+    var q = [{x:start.x, y:start.y, p:null}], v = new Set([`${start.x},${start.y}`]);
+    var found = null;
+    var maxSteps = 200; // Limit search
+    
+    // MODIFIED: Distance check logic
+    // Only chase if player is within 7 blocks (Manhattan distance)
+    var d1 = Math.abs(start.x-t1.x)+Math.abs(start.y-t1.y);
+    var d2 = Math.abs(start.x-t2.x)+Math.abs(start.y-t2.y);
+    
+    // If BOTH are too far, stop chasing
+    if(d1 > 7 && d2 > 7) return null; 
+
+    var head=0;
+    while(head < q.length && head < maxSteps) {
+        var curr = q[head++];
+        if((curr.x===t1.x && curr.y===t1.y) || (curr.x===t2.x && curr.y===t2.y)) {
+            found = curr; break;
+        }
+        [[0,1],[0,-1],[1,0],[-1,0]].forEach(([dx,dy])=>{
+            var nx=curr.x+dx, ny=curr.y+dy;
+            if(nx>=0&&nx<W&&ny>=0&&ny<H && grid[ny][nx]!==T_WALL && !v.has(`${nx},${ny}`)) {
+                v.add(`${nx},${ny}`);
+                q.push({x:nx, y:ny, p:curr});
+            }
+        });
+    }
+    
+    if(!found) return null;
+    // Backtrack to first step
+    while(found.p && found.p.p) found = found.p;
+    return {x:found.x, y:found.y};
+}
+
+function pickTreasure(g, s1, s2) {
+    // Simple: Pick random floor far from bases
+    var cand = [];
+    for(var y=0;y<H;y++)for(var x=0;x<W;x++) 
+        if(g[y][x]===T_FLOOR && dist({x,y},s1)>10 && dist({x,y},s2)>10) cand.push({x,y});
+    return cand.length ? cand[Math.floor(Math.random()*cand.length)] : {x:20,y:12};
+}
+
+function placeQuiz(g, p1, p2, tr) {
+    var cand = [];
+    for(var y=0;y<H;y++)for(var x=0;x<W;x++) 
+        if(g[y][x]===T_FLOOR && dist({x,y},p1)>5 && dist({x,y},p2)>5 && dist({x,y},tr)>5) cand.push({x,y});
+    
+    // Pick 15 quiz tiles
+    for(var i=0; i<16; i++) {
+        if(!cand.length) break;
+        var idx = Math.floor(Math.random()*cand.length);
+        var p = cand.splice(idx,1)[0];
+        g[p.y][p.x] = T_QUIZ;
+    }
+}
+
+function spawnMons(c) {
+    var m=[]; var floors=[];
+    for(var y=0;y<H;y++)for(var x=0;x<W;x++) if(map[y][x]===T_FLOOR) floors.push({x,y});
+    for(var i=0;i<c;i++) m.push(floors[Math.floor(Math.random()*floors.length)]);
+    return m;
+}
+
+function dist(a,b){ return Math.abs(a.x-b.x)+Math.abs(a.y-b.y); }
+
+// ==========================================
+// 5. CLIENT INPUT & QUIZ UI
+// ==========================================
+function myMove(dx, dy) {
+    if(isQuiz) return; // Block input during quiz
+    var me = players[myRole];
+    var nx = me.x+dx, ny = me.y+dy;
+    
+    // Local Check
+    if(nx<0||nx>=W||ny<0||ny>=H) return;
+    if(map[ny][nx]===T_WALL) return;
+    
+    if(map[ny][nx]===T_QUIZ) {
+        showQuiz(() => sendMove(dx, dy));
+    } else {
+        sendMove(dx, dy);
+    }
+}
+
+function sendMove(dx, dy) {
+    if(isHost) processMove('p1', dx, dy);
+    else if(conn && conn.open) conn.send({type:'MOVE', dx:dx, dy:dy});
+}
+
+// Quiz UI
+function showQuiz(cb) {
+    isQuiz = true; quizCb = cb;
+    var a=Math.floor(Math.random()*50), b=Math.floor(Math.random()*50);
+    var ans = a+b;
+    var opts = [ans, ans+1, ans-1, ans+10].sort(()=>Math.random()-0.5);
+    
+    document.getElementById('q-text').innerText = `${a} + ${b} = ?`;
+    var html = '';
+    opts.forEach(o => html += `<button class="q-btn" onclick="ansQuiz(${o}, ${ans})">${o}</button>`);
+    document.getElementById('q-opts').innerHTML = html;
+    document.getElementById('q-feedback').innerText = "";
+    document.getElementById('quiz-modal').style.display = 'flex';
+}
+
+window.ansQuiz = function(val, corr) {
+    if(val === corr) {
+        document.getElementById('q-feedback').innerHTML = "<span style='color:green'>ĐÚNG!</span>";
+        setTimeout(() => {
+            document.getElementById('quiz-modal').style.display='none';
+            isQuiz=false;
+            if(quizCb) quizCb();
+        }, 500);
+    } else {
+        document.getElementById('q-feedback').innerHTML = "<span style='color:red'>SAI! BẠN BỊ CHẶN.</span>";
+        setTimeout(() => {
+            document.getElementById('quiz-modal').style.display='none';
+            isQuiz=false;
+        }, 800);
+    }
+}
+
+window.addEventListener('keydown', e => {
+    if(e.key.includes('Up')||e.key==='w') myMove(0,-1);
+    if(e.key.includes('Down')||e.key==='s') myMove(0,1);
+    if(e.key.includes('Left')||e.key==='a') myMove(-1,0);
+    if(e.key.includes('Right')||e.key==='d') myMove(1,0);
+});
+
+// Mobile
+document.querySelectorAll('.btn-d').forEach(b => {
+    const act=(e)=>{
+        e.preventDefault(); var k=b.dataset.key;
+        if(k==='u')myMove(0,-1);if(k==='d')myMove(0,1);if(k==='l')myMove(-1,0);if(k==='r')myMove(1,0);
+    };
+    b.addEventListener('touchstart', act); b.addEventListener('mousedown', act);
+});
+
+// ==========================================
+// 6. RENDER
+// ==========================================
+var cvs=document.getElementById('cvs'), ctx=cvs.getContext('2d');
+
+function loop() {
+    if(isLooping) {
+        draw();
+        requestAnimationFrame(loop);
+    }
+}
+
+function draw() {
+    ctx.fillStyle = COLORS.FLOOR; ctx.fillRect(0,0,cvs.width,cvs.height);
+    if(!map.length) return; // loop continues
+    
+    // Map
+    for(var y=0; y<H; y++) for(var x=0; x<W; x++) {
+        var t = map[y][x];
+        if(t===T_WALL) { ctx.fillStyle=COLORS.WALL; ctx.fillRect(x*TILE,y*TILE,TILE,TILE); }
+        if(t===T_QUIZ) { ctx.fillStyle=COLORS.PURPLE; ctx.fillRect(x*TILE+2,y*TILE+2,TILE-4,TILE-4); }
+    }
+    
+    // Bases
+    ctx.fillStyle=COLORS.B_RED; ctx.fillRect(1*TILE,1*TILE,TILE,TILE);
+    ctx.fillStyle=COLORS.B_GREEN; ctx.fillRect((W-2)*TILE,(H-2)*TILE,TILE,TILE);
+    
+    // Treasure
+    if(treasure) {
+        ctx.fillStyle=COLORS.YELLOW; ctx.beginPath();
+        ctx.arc(treasure.x*TILE+TILE/2, treasure.y*TILE+TILE/2, TILE/3, 0, 6.28); ctx.fill();
+    }
+    
+    // Players
+    ['p1','p2'].forEach(k => {
+        var p=players[k]; if(!p) return;
+        ctx.fillStyle=p.c; ctx.fillRect(p.x*TILE+2, p.y*TILE+2, TILE-4, TILE-4);
+        if(p.has) {
+            ctx.strokeStyle=COLORS.YELLOW; ctx.lineWidth=2;
+            ctx.strokeRect(p.x*TILE+2, p.y*TILE+2, TILE-4, TILE-4);
+        }
+    });
+    
+    // Monsters
+    ctx.fillStyle=COLORS.MON;
+    monsters.forEach(m => {
+        ctx.beginPath(); ctx.arc(m.x*TILE+TILE/2, m.y*TILE+TILE/2, TILE/3, 0, 6.28); ctx.fill();
+    });
+    
+    document.getElementById('game-msg').innerText = "BẠN LÀ: " + (myRole==='p1'?"P1 (ĐỎ)":"P2 (XANH)");
+}
+
+function resize(){
+    var w=window.innerWidth, h=window.innerHeight;
+    TILE = Math.min(Math.floor((w-20)/W), Math.floor((h-80)/H));
+    TILE = Math.max(8, TILE);
+    cvs.width=W*TILE; cvs.height=H*TILE;
+}
+window.addEventListener('resize', resize);
+
+function showHudMsg(msg) { document.getElementById('sub-msg').innerText = msg; }
+function showWin(msg) {
+    document.getElementById('end-screen').style.display='flex';
+    document.getElementById('win-msg').innerText = msg;
+}
+
+</script>
+</body>
+</html>
