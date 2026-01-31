@@ -1,0 +1,1277 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Maze Duel - 4P Lobby (Fixed Cloud)</title>
+  <!-- SỬA LỖI: Dùng phiên bản 4.3.7 ổn định -->
+  <script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
+
+  <style>
+    :root {
+      --bg: #1a1a1a; --panel-bg: #2d2d2d; --text: #e0e0e0;
+      --primary: #4a90e2; --accent: #50e3c2; --border: #444;
+      --cpu: #ff9f43;
+    }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font-family: 'Segoe UI', sans-serif; overflow: hidden;
+      display: flex; flex-direction: column; align-items: center;
+      height: 100vh; touch-action: none; user-select: none;
+    }
+    .box {
+      background: var(--panel-bg); padding: 26px; border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+      text-align: center; width: 370px; max-width: 92%;
+      border: 1px solid var(--border);
+      position: relative;
+    }
+    h2 { margin-top: 0; color: var(--primary); font-weight: 700; letter-spacing: 1px; }
+    .sub { color:#999; font-size:12px; margin-top:-8px; margin-bottom:12px; }
+
+    input {
+      padding: 12px; font-size: 18px; width: 240px; text-align: center;
+      margin: 10px 0; border-radius: 6px; border: 2px solid #555;
+      background: #222; color: #fff; font-weight: 700;
+      outline: none;
+    }
+    input:focus { border-color: var(--primary); background: #333; }
+
+    button {
+      padding: 12px; width: 100%; margin: 8px 0; border-radius: 6px;
+      border: none; cursor: pointer; font-weight: 700; font-size: 16px;
+      transition: 0.2s;
+    }
+    button:disabled { background: #444 !important; color: #777; cursor: not-allowed; }
+    .btn-host { background: var(--primary); color: white; }
+    .btn-join { background: var(--accent); color: #1a1a1a; }
+    .btn-cpu  { background: #ff9f43; color: white; margin-bottom: 10px; }
+    .btn-host:hover, .btn-join:hover, .btn-cpu:hover { filter: brightness(1.1); transform: translateY(-1px); }
+
+    .btn-retry { background: transparent; border: 1px solid #666; color: #aaa; font-size: 12px; padding: 8px; width: auto; margin-top: 5px;}
+    .btn-retry:hover { border-color: #fff; color: #fff; }
+
+    .id-display {
+      font-size: 32px; color: var(--accent); font-weight: bold; font-family: monospace;
+      border: 2px dashed #555; padding: 10px; margin: 12px 0;
+      background: #222; letter-spacing: 3px; border-radius: 6px;
+    }
+
+    #lobby {
+      position: absolute; top:0; left:0; width:100%; height:100%;
+      z-index: 100; display: flex; justify-content: center; align-items: center;
+    }
+    #status-msg { color: #888; font-size: 13px; margin-bottom: 10px; min-height: 18px; }
+    #error-msg  { color: #ff6b6b; font-weight: 800; margin-top: 10px; min-height: 20px; font-size: 13px;}
+
+    .diff-opt { margin: 5px 0; padding: 15px; background: #333; color: white; border: 1px solid #555; }
+    .diff-opt:hover { background: var(--primary); border-color: var(--primary); }
+
+    canvas {
+      border-radius: 4px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+      max-width: 98vw; max-height: 80vh;
+      background: #222;
+    }
+    #hud {
+      margin-top: 12px; text-align: center;
+      background: #333; padding: 8px 18px; border-radius: 20px;
+      width: fit-content; border: 1px solid #444;
+    }
+    .hud-main { font-size: 16px; font-weight: 800; color: #fff; }
+    .hud-sub  { font-size: 13px; color: #bbb; margin-top: 2px; }
+
+    .modal-overlay {
+      position: absolute; top:0; left:0; width:100%; height:100%;
+      background: rgba(0,0,0,0.8); z-index: 200; display: none;
+      justify-content: center; align-items: center;
+    }
+    .modal-box {
+      background: #f0f0f0; color: #333; width: 350px; padding: 25px;
+      border-radius: 12px; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    }
+    .quiz-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 20px; }
+    .q-btn {
+      background: #fff; border: 2px solid #ddd;
+      padding: 15px; font-size: 18px; cursor: pointer; border-radius: 8px; color: #333;
+      transition: 0.2s; font-weight: bold;
+    }
+    .q-btn:hover { background: #e6f7ff; border-color: var(--primary); }
+
+    #end-screen { display: none; flex-direction: column; z-index: 300; }
+    .win-txt { font-size: 40px; font-weight: 900; margin-bottom: 20px; color: var(--accent); }
+
+    #controls {
+      display: none; position: absolute; bottom: 30px; right: 30px; width: 160px; height: 160px;
+    }
+    @media (max-width: 1024px) { #controls { display: block; } }
+    .btn-d {
+      position: absolute; width: 55px; height: 55px;
+      background: rgba(255, 255, 255, 0.1); border-radius: 50%;
+      display: flex; justify-content: center; align-items: center;
+      border: 2px solid rgba(255,255,255,0.2); font-size: 24px; color: white;
+    }
+    .b-u { top:0; left:52px; } .b-d { bottom:0; left:52px; }
+    .b-l { top:52px; left:0; } .b-r { top:52px; right:0; }
+    .btn-d:active { background: var(--primary); border-color: transparent; }
+
+    /* Lobby list */
+    #player-list {
+      text-align: left;
+      background: #222;
+      border: 1px solid #444;
+      border-radius: 10px;
+      padding: 12px;
+      margin-top: 10px;
+      font-size: 14px;
+      color: #ddd;
+    }
+    .pl-row {
+      display:flex; justify-content: space-between; align-items: center;
+      padding: 7px 4px;
+      border-bottom: 1px dashed #333;
+    }
+    .pl-row:last-child { border-bottom: none; }
+    .pl-ok   { color: #4ecdc4; font-weight: 900; }
+    .pl-wait { color: #888; }
+    .tag-host {
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(74,144,226,0.2);
+      border: 1px solid rgba(74,144,226,0.6);
+      color: #9cc3ff;
+      margin-left: 8px;
+      font-weight: 800;
+    }
+    .btn-start { background: #4ecdc4; color: #1a1a1a; font-size: 16px; }
+    .tip { color:#777; font-size:12px; margin-top: 10px; line-height: 1.3; }
+  </style>
+</head>
+
+<body>
+  <!-- LOBBY -->
+  <div id="lobby">
+    <div class="box" id="lobby-main">
+      <h2>MAZE DUEL (4P)</h2>
+      <div class="sub">Nhập tên để hiện trong phòng chờ</div>
+
+      <div id="status-msg">Đang kết nối Cloud Relay...</div>
+
+      <!-- NAME INPUT -->
+      <input id="player-name" type="text" maxlength="16" placeholder="Tên của bạn">
+
+      <button class="btn-cpu" onclick="showDifficulty()">🎮 CHƠI VỚI MÁY (OFFLINE)</button>
+
+      <div style="margin: 15px 0; border-top: 1px solid #444; position: relative;">
+        <span style="background: var(--panel-bg); padding: 0 10px; color: #888; font-size: 11px; position: absolute; top: -8px; left: 50%; transform: translateX(-50%);">HOẶC CHƠI ONLINE (TỐI ĐA 4)</span>
+      </div>
+
+      <button id="btn-host" class="btn-host" onclick="hostGame()" disabled>TẠO PHÒNG</button>
+      <div style="margin:5px 0;">
+        <input type="text" id="join-id" placeholder="MÃ PHÒNG" maxlength="4" style="width: 140px; margin: 5px 0; text-transform: uppercase; letter-spacing:2px;">
+        <button id="btn-join" class="btn-join" onclick="joinGame()" disabled style="width: auto; padding: 12px 20px;">VÀO</button>
+      </div>
+
+      <button class="btn-retry" onclick="location.reload()">↻ Tải lại trang</button>
+
+      <div id="error-msg"></div>
+      <div style="margin-top:18px; font-size:11px; color:#666;">
+        v3.3 - Fixed Cloud (HiveMQ + MQTT v4)
+      </div>
+    </div>
+
+    <!-- Waiting room -->
+    <div class="box" id="lobby-wait" style="display:none;">
+      <h3 style="color:var(--primary); margin-top:0;">PHÒNG CHỜ (TỐI ĐA 4)</h3>
+      <p style="color:#aaa; font-size: 14px; margin: 8px 0;">Mã phòng:</p>
+      <div class="id-display" id="my-id">....</div>
+
+      <div id="wait-status" style="font-size:13px; color:#888; margin-top:5px;">Đang đợi người chơi...</div>
+
+      <div id="player-list"></div>
+
+      <!-- ONLY HOST SEE THIS -->
+      <button id="btn-start" class="btn-start" onclick="forceStart()" style="display:none;">🚀 BẮT ĐẦU (CHỦ PHÒNG)</button>
+
+      <div class="tip">
+        • Chỉ <b>chủ phòng (P1)</b> mới có thể bấm bắt đầu.<br>
+        • Khi đủ người, host vẫn phải bấm start.
+      </div>
+
+      <button onclick="location.reload()" style="background:#444; color:#fff; width:55%; margin-top:10px;">RỜI PHÒNG</button>
+    </div>
+
+    <!-- CPU Difficulty Select -->
+    <div class="box" id="lobby-cpu" style="display:none;">
+      <h3 style="color:var(--cpu)">CHỌN ĐỘ KHÓ</h3>
+      <button class="diff-opt" onclick="startCpuGame(1)" style="border-left: 5px solid #4ecdc4;">DỄ (Rùa bò)</button>
+      <button class="diff-opt" onclick="startCpuGame(2)" style="border-left: 5px solid #ffe66d;">THƯỜNG (Vừa phải)</button>
+      <button class="diff-opt" onclick="startCpuGame(3)" style="border-left: 5px solid #ff6b6b;">KHÓ (Siêu tốc)</button>
+      <button onclick="document.getElementById('lobby-cpu').style.display='none';document.getElementById('lobby-main').style.display='block';" style="background:#444; margin-top:15px;">Quay lại</button>
+    </div>
+  </div>
+
+  <!-- GAME -->
+  <div id="game-ui" style="display:none; flex-direction:column; align-items:center;">
+    <canvas id="cvs"></canvas>
+    <div id="hud">
+      <div class="hud-main" id="game-msg"></div>
+      <div class="hud-sub" id="sub-msg">Nhiệm vụ: Tìm ô vuông màu vàng</div>
+    </div>
+  </div>
+
+  <!-- QUIZ -->
+  <div id="quiz-modal" class="modal-overlay">
+    <div class="modal-box">
+      <div style="font-size:20px; color:var(--primary); font-weight:bold;">CÂU HỎI</div>
+      <div id="q-text" style="font-size:26px; font-weight:bold; margin:20px 0;">...</div>
+      <div id="q-opts" class="quiz-opts"></div>
+      <div id="q-feedback" style="margin-top:15px; height:20px; font-weight:bold;"></div>
+    </div>
+  </div>
+
+  <!-- END -->
+  <div id="end-screen" class="modal-overlay">
+    <div class="win-txt" id="win-msg">...</div>
+    <button onclick="location.reload()" class="btn-host" style="width:200px; padding: 15px; font-size:18px;">CHƠI LẠI</button>
+  </div>
+
+  <!-- MOBILE -->
+  <div id="controls">
+    <div class="btn-d b-u" data-key="u">▲</div>
+    <div class="btn-d b-d" data-key="d">▼</div>
+    <div class="btn-d b-l" data-key="l">◀</div>
+    <div class="btn-d b-r" data-key="r">▶</div>
+  </div>
+
+<script>
+// ==========================================
+// 1. CONFIG & GLOBALS
+// ==========================================
+var W = 41, H = 25, TILE = 16;
+var T_FLOOR=0, T_WALL=1, T_QUIZ=2;
+
+var COLORS = {
+  WALL: '#404040', FLOOR: '#262626', GRID: '#333333',
+  RED: '#ff6b6b', GREEN: '#4ecdc4', YELLOW: '#ffe66d', PURPLE: '#a389f4',
+  BLUE: '#4a90e2',
+  MONSTER: '#ff9f43'
+};
+var PLAYER_COLORS = [COLORS.RED, COLORS.GREEN, COLORS.PURPLE, COLORS.BLUE];
+
+var client = null;
+var myRoomId = null;
+var myClientId = 'maze_' + Math.random().toString(16).substr(2, 8);
+var isHost = false;
+var myRole = ''; // p1..p4
+
+// Names
+var myName = (localStorage.getItem('maze_name') || '').trim();
+
+// Lobby 4P
+var roomPlayers = []; // [{id, role, name}]
+var roomOpen = true;
+var joinPending = false;
+
+// Single Player / CPU
+var isSinglePlayer = false;
+var cpuLevel = 1;
+var lastCpuMove = 0;
+var cpuPendingMove = null;
+var cpuUnlockTime = 0;
+
+var map=[], players={}, treasure=null, monsters=[];
+var isQuiz=false, quizCb=null;
+var isLooping = false;
+var lastMonsMove = 0;
+var gameActive = false;
+
+var keys = {};
+var lastInputTime = 0;
+var INPUT_DELAY = 120;
+
+function genShortId() {
+  var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  var res = '';
+  for(var i=0; i<4; i++) res += chars.charAt(Math.floor(Math.random() * chars.length));
+  return res;
+}
+function showErr(t){ document.getElementById('error-msg').innerText = t || ""; }
+
+function sanitizeName(raw) {
+  var s = (raw || '').trim();
+  if (!s) return '';
+  s = s.replace(/[<>]/g,'');
+  if (s.length > 16) s = s.slice(0,16);
+  return s;
+}
+function requireMyName() {
+  var input = document.getElementById('player-name');
+  var nm = sanitizeName(input.value);
+  if(!nm) {
+    showErr("Vui lòng nhập tên (1-16 ký tự) trước khi tạo/vào phòng.");
+    input.focus();
+    return null;
+  }
+  myName = nm;
+  localStorage.setItem('maze_name', myName);
+  showErr("");
+  return myName;
+}
+
+// Init name field
+setTimeout(() => {
+  var el = document.getElementById('player-name');
+  if(el) el.value = myName || '';
+}, 0);
+
+// ==========================================
+// 2. NETWORK (MQTT RELAY - FIXED)
+// ==========================================
+function initNet() {
+  // SỬA LỖI: Dùng HiveMQ stable hơn cho WebSockets
+  // const brokerUrl = 'wss://broker.emqx.io:8084/mqtt';
+  const brokerUrl = 'wss://broker.hivemq.com:8884/mqtt';
+  
+  document.getElementById('status-msg').innerText = "Đang kết nối Cloud...";
+
+  client = mqtt.connect(brokerUrl, {
+    clientId: myClientId,
+    clean: true,
+    connectTimeout: 5000,
+    reconnectPeriod: 2000, // Tự động thử lại
+    keepalive: 60,
+    path: '/mqtt'
+  });
+
+  client.on('connect', () => {
+    document.getElementById('status-msg').innerText = "✅ Đã kết nối Cloud (HiveMQ)!";
+    document.getElementById('status-msg').style.color = "#4ecdc4";
+    document.getElementById('btn-host').disabled = false;
+    document.getElementById('btn-join').disabled = false;
+    document.getElementById('error-msg').innerText = "";
+  });
+
+  client.on('error', (err) => {
+    console.log("MQTT Error:", err);
+    showErr("Mất kết nối Cloud. Vui lòng thử lại hoặc chơi Offline.");
+    // client.end(); // Don't kill, let it reconnect
+  });
+
+  client.on('message', (topic, message) => {
+    if (!isSinglePlayer) handleMessage(topic, message.toString());
+  });
+}
+setTimeout(initNet, 500);
+
+// ==========================================
+// 3. UI HANDLERS
+// ==========================================
+function showDifficulty() {
+  document.getElementById('lobby-main').style.display = 'none';
+  document.getElementById('lobby-cpu').style.display = 'block';
+}
+
+function startCpuGame(level) {
+  isSinglePlayer = true;
+  cpuLevel = level;
+  isHost = true;
+  myRole = 'p1';
+  myName = requireMyName() || "Bạn";
+
+  document.getElementById('lobby-cpu').style.display = 'none';
+  document.getElementById('game-ui').style.display = 'flex';
+  startGame();
+}
+
+function openWaitUI(roomIdText) {
+  document.getElementById('lobby-main').style.display='none';
+  document.getElementById('lobby-cpu').style.display='none';
+  document.getElementById('lobby-wait').style.display='block';
+  document.getElementById('my-id').innerText = roomIdText || myRoomId || "....";
+  updateLobbyUI();
+}
+
+function hostGame() {
+  if(!client || !client.connected) { showErr("Chưa kết nối Cloud!"); return; }
+  var nm = requireMyName(); if(!nm) return;
+
+  isSinglePlayer = false;
+  myRoomId = genShortId();
+  isHost = true;
+  myRole = 'p1';
+
+  roomOpen = true;
+  roomPlayers = [{ id: myClientId, role: 'p1', name: nm }];
+
+  client.subscribe(`mazegame/${myRoomId}/#`, (err) => {
+    if(!err) {
+      openWaitUI(myRoomId);
+      document.getElementById('wait-status').innerText = "Bạn là CHỦ PHÒNG (P1). Đang đợi người chơi...";
+      publish('ROOM_UPDATE', { roomPlayers, open: roomOpen });
+    } else {
+      showErr("Không subscribe được phòng!");
+    }
+  });
+}
+
+function joinGame() {
+  if(!client || !client.connected) { showErr("Chưa kết nối Cloud!"); return; }
+  var nm = requireMyName(); if(!nm) return;
+
+  isSinglePlayer = false;
+  var id = document.getElementById('join-id').value.trim().toUpperCase();
+  if(!id || id.length !== 4) { showErr("Mã phòng không hợp lệ!"); return; }
+
+  myRoomId = id;
+  isHost = false;
+  myRole = '';
+
+  document.getElementById('btn-join').innerText = "Đang vào...";
+  document.getElementById('btn-join').disabled = true;
+  showErr("");
+
+  joinPending = true;
+
+  client.subscribe(`mazegame/${myRoomId}/#`, (err) => {
+    if(!err) {
+      openWaitUI(myRoomId);
+      document.getElementById('wait-status').innerText = "Đã gửi yêu cầu vào phòng...";
+      publish('JOIN', { id: myClientId, name: nm });
+
+      setTimeout(() => {
+        if(joinPending && document.getElementById('lobby').style.display !== 'none') {
+          document.getElementById('btn-join').innerText = "VÀO";
+          document.getElementById('btn-join').disabled = false;
+          document.getElementById('lobby-wait').style.display='none';
+          document.getElementById('lobby-main').style.display='block';
+          showErr("Không tìm thấy phòng (hoặc phòng đã full/đã bắt đầu)!");
+        }
+      }, 5000);
+    } else {
+      showErr("Không subscribe được phòng!");
+      document.getElementById('btn-join').innerText = "VÀO";
+      document.getElementById('btn-join').disabled = false;
+    }
+  });
+}
+
+// Only host can start
+function forceStart() {
+  if(!isHost) return;
+  if(roomPlayers.length < 2) {
+    document.getElementById('wait-status').innerText = "Cần ít nhất 2 người để bắt đầu!";
+    return;
+  }
+  startGame();
+}
+
+function publish(type, data) {
+  if(isSinglePlayer) return;
+  if(client && client.connected && myRoomId) {
+    const payload = JSON.stringify({ t: type, d: data, s: myClientId });
+    client.publish(`mazegame/${myRoomId}`, payload);
+  }
+}
+
+function updateLobbyUI() {
+  var list = document.getElementById('player-list');
+  if(!list) return;
+
+  var html = '';
+  for(var i=1;i<=4;i++){
+    var r = 'p'+i;
+    var p = roomPlayers.find(x => x.role === r);
+
+    var left = `👤 Player ${i}`;
+    if (p && p.role === 'p1') left += `<span class="tag-host">HOST</span>`;
+
+    var right;
+    if (p) {
+      var nm = (p.name || `Player${i}`);
+      var meTag = (p.id === myClientId) ? ` <span style="color:#ffe66d;font-weight:900;">(bạn)</span>` : "";
+      right = `<span class="pl-ok">${nm}${meTag}</span>`;
+    } else {
+      right = `<span class="pl-wait">Đang chờ...</span>`;
+    }
+
+    html += `<div class="pl-row">
+      <div>${left}</div>
+      <div>${right}</div>
+    </div>`;
+  }
+  list.innerHTML = html;
+
+  if(isHost && roomOpen && roomPlayers.length >= 2) {
+    document.getElementById('btn-start').style.display = 'block';
+  } else {
+    document.getElementById('btn-start').style.display = 'none';
+  }
+}
+
+// ==========================================
+// 4. NETWORK MESSAGE HANDLER
+// ==========================================
+function handleMessage(topic, msgStr) {
+  try {
+    const msg = JSON.parse(msgStr);
+    if(msg.s === myClientId) return;
+
+    // Host receives JOIN
+    if(isHost && msg.t === 'JOIN') {
+      if(!roomOpen) {
+        publish('REJECT', { to: msg.d.id, reason: "Phòng đã bắt đầu!" });
+        return;
+      }
+      if(roomPlayers.length >= 4) {
+        publish('REJECT', { to: msg.d.id, reason: "Phòng đã đầy!" });
+        return;
+      }
+      if(roomPlayers.some(p => p.id === msg.d.id)) return;
+
+      var role = 'p' + (roomPlayers.length + 1);
+      var nm = sanitizeName(msg.d.name) || `Player${roomPlayers.length+1}`;
+      roomPlayers.push({ id: msg.d.id, role: role, name: nm });
+
+      document.getElementById('wait-status').innerText = `Có người vào! (${roomPlayers.length}/4)`;
+      updateLobbyUI();
+
+      publish('ROOM_UPDATE', { roomPlayers, open: roomOpen });
+    }
+
+    // All receive roster updates
+    if(msg.t === 'ROOM_UPDATE') {
+      roomPlayers = msg.d.roomPlayers || [];
+      roomOpen = (msg.d.open !== undefined) ? msg.d.open : roomOpen;
+
+      var me = roomPlayers.find(p => p.id === myClientId);
+      if(me) myRole = me.role;
+
+      joinPending = false;
+
+      updateLobbyUI();
+
+      if(myRole){
+        var myRec = roomPlayers.find(p => p.id === myClientId);
+        var nm = myRec ? (myRec.name || myName || myRole) : (myName || myRole);
+        document.getElementById('wait-status').innerText =
+          `Bạn: ${nm} • Vai trò: ${myRole.toUpperCase()} • Đang chờ host bắt đầu...`;
+      } else {
+        document.getElementById('wait-status').innerText = `Đang chờ host chấp nhận...`;
+      }
+    }
+
+    // Reject join (client)
+    if(msg.t === 'REJECT') {
+      if(msg.d && msg.d.to === myClientId) {
+        joinPending = false;
+        document.getElementById('lobby-wait').style.display='none';
+        document.getElementById('lobby-main').style.display='block';
+        showErr(msg.d.reason || "Bị từ chối vào phòng!");
+        document.getElementById('btn-join').innerText = "VÀO";
+        document.getElementById('btn-join').disabled = false;
+      }
+    }
+
+    // Game init
+    if(msg.t === 'INIT') {
+      map = msg.d.map;
+      players = msg.d.ply;
+      treasure = msg.d.tr;
+      monsters = msg.d.mons || [];
+      roomPlayers = msg.d.rp || roomPlayers;
+      roomOpen = false;
+
+      var me2 = roomPlayers.find(p => p.id === myClientId);
+      if(me2) myRole = me2.role;
+
+      if(!isHost) {
+        document.getElementById('lobby').style.display='none';
+        document.getElementById('game-ui').style.display='flex';
+        resize();
+        gameActive = true;
+        if(!isLooping) { isLooping=true; loop(); }
+      }
+      return;
+    }
+
+    // Server state update
+    if(msg.t === 'UPDATE') {
+      if (msg.d.ply) {
+        for (const r in msg.d.ply) {
+          if (!msg.d.ply[r]) continue;
+          if (r === myRole && players[r]) {
+            var myP = players[r];
+            var srvP = msg.d.ply[r];
+            var dd = Math.abs(myP.x - srvP.x) + Math.abs(myP.y - srvP.y);
+            if (dd > 5 || myP.has !== srvP.has) players[r] = srvP;
+          } else {
+            players[r] = msg.d.ply[r];
+          }
+        }
+      }
+      if (msg.d.tr !== undefined) treasure = msg.d.tr;
+      if (msg.d.mons) monsters = msg.d.mons;
+      if (msg.d.win) showWin(msg.d.win);
+    }
+
+    if(msg.t === 'MAP_UPDATE') {
+      map = msg.d.map;
+      if(msg.d.mons) monsters = msg.d.mons;
+      if(msg.d.msg) showHudMsg(msg.d.msg);
+    }
+
+    // Client move -> host applies move by sender id -> role
+    if(msg.t === 'MOVE' && isHost) {
+      var sender = roomPlayers.find(p => p.id === msg.s);
+      if(!sender) return;
+      processMove(sender.role, msg.d.dx, msg.d.dy);
+    }
+
+  } catch (e) { console.error(e); }
+}
+
+// ==========================================
+// 5. GAME LOGIC & CPU AI
+// ==========================================
+function startGame() {
+  if(gameActive) return;
+
+  roomOpen = false;
+
+  // --- Generate maze + anti-dead-end ---
+  map = generateMaze(W, H, 0.15);
+  reduceDeadEnds(map, 6);
+
+  // spawn points (up to 4)
+  var spawns = [
+    {x:1, y:1},
+    {x:W-2, y:1},
+    {x:1, y:H-2},
+    {x:W-2, y:H-2}
+  ];
+  spawns.forEach(s => map[s.y][s.x] = T_FLOOR);
+
+  // active roles
+  var activeRoles;
+  if(isSinglePlayer) {
+    activeRoles = ['p1','p2'];
+    roomPlayers = [{id: myClientId, role:'p1', name: myName || 'Bạn'},{id:'CPU', role:'p2', name:'CPU'}];
+  } else {
+    activeRoles = roomPlayers.map(p => p.role);
+  }
+
+  // place treasure + quizzes away from spawns
+  var usedSpawns = spawns.slice(0, Math.max(2, activeRoles.length));
+  treasure = pickTreasureMulti(map, usedSpawns);
+  placeQuizMulti(map, usedSpawns, treasure);
+
+  // init players
+  players = {};
+  activeRoles.forEach((role, idx) => {
+    var s = spawns[idx] || spawns[0];
+    players[role] = {
+      x: s.x, y: s.y,
+      c: PLAYER_COLORS[idx % PLAYER_COLORS.length],
+      has:false,
+      base:{x:s.x, y:s.y}
+    };
+  });
+
+  // spawn monsters
+  monsters = spawnMons(4);
+
+  if (!isSinglePlayer) {
+    publish('ROOM_UPDATE', { roomPlayers, open: roomOpen }); // close room
+    publish('INIT', {map:map, ply:players, tr:treasure, mons:monsters, rp: roomPlayers});
+    setTimeout(() => publish('INIT', {map:map, ply:players, tr:treasure, mons:monsters, rp: roomPlayers}), 400);
+  }
+
+  document.getElementById('lobby').style.display='none';
+  document.getElementById('game-ui').style.display='flex';
+  resize();
+  gameActive = true;
+  if(!isLooping) { isLooping=true; loop(); }
+
+  // Host tick
+  setInterval(() => {
+    if(isHost && gameActive) {
+      var now = Date.now();
+
+      if (now - lastMonsMove > 450) {
+        updateMons();
+        lastMonsMove = now;
+      }
+      if (isSinglePlayer) updateCpu(now);
+
+      if (!isSinglePlayer) {
+        publish('UPDATE', {ply:players, tr:treasure, mons:monsters});
+      }
+    }
+  }, 50);
+}
+
+function updateCpu(now) {
+  if (cpuPendingMove) {
+    if (now < cpuUnlockTime) {
+      showHudMsg("⚠️ CPU đang giải... " + Math.ceil((cpuUnlockTime - now)/1000) + "s");
+      return;
+    }
+    processMove('p2', cpuPendingMove.dx, cpuPendingMove.dy);
+    cpuPendingMove = null;
+    lastCpuMove = now;
+    showHudMsg("CPU đã giải xong!");
+    return;
+  }
+
+  var delay = 600;
+  if (cpuLevel === 2) delay = 400;
+  if (cpuLevel === 3) delay = 250;
+
+  if (now - lastCpuMove < delay) return;
+  lastCpuMove = now;
+
+  var cpu = players.p2;
+  var opp = players.p1;
+  if(!cpu || !opp) return;
+
+  var target;
+  if (cpu.has) target = cpu.base;
+  else if (opp.has) target = opp;
+  else if (treasure) target = treasure;
+  else target = cpu.base;
+
+  var move = null;
+  var randomChance = (cpuLevel === 1) ? 0.4 : (cpuLevel === 2 ? 0.1 : 0.0);
+
+  if (Math.random() < randomChance) {
+    var dirs = [[0,1],[0,-1],[1,0],[-1,0]].filter(d => {
+      var nx=cpu.x+d[0], ny=cpu.y+d[1];
+      return nx>0 && ny>0 && nx<W-1 && ny<H-1 && map[ny][nx] !== T_WALL;
+    });
+    if (dirs.length) {
+      var d = dirs[Math.floor(Math.random()*dirs.length)];
+      move = {dx:d[0], dy:d[1]};
+    }
+  } else {
+    var nextPos = bfsPath(map, cpu, target, target, monsters);
+    if (!nextPos) nextPos = bfsPath(map, cpu, target, target, []);
+    if (nextPos) move = {dx: nextPos.x - cpu.x, dy: nextPos.y - cpu.y};
+  }
+
+  if (move) {
+    var nx = cpu.x + move.dx;
+    var ny = cpu.y + move.dy;
+
+    if (map[ny][nx] === T_QUIZ) {
+      cpuPendingMove = {dx: move.dx, dy: move.dy};
+      cpuUnlockTime = now + 3000;
+      return;
+    }
+    processMove('p2', move.dx, move.dy);
+  }
+}
+
+function processMove(role, dx, dy) {
+  if (!gameActive) return;
+  var p = players[role];
+  if(!p) return;
+
+  var nx = p.x+dx, ny = p.y+dy;
+  if(nx<0||nx>=W||ny<0||ny>=H) return;
+  if(map[ny][nx] === T_WALL) return;
+
+  if(map[ny][nx] === T_QUIZ) {
+    map[ny][nx] = T_FLOOR;
+    if (!isSinglePlayer) publish('MAP_UPDATE', {map:map});
+  }
+
+  p.x = nx; p.y = ny;
+
+  // pick treasure
+  if(treasure && nx===treasure.x && ny===treasure.y) {
+    treasure = null; p.has = true;
+    regenerateMapOnPickup(p);
+  }
+
+  // steal from anyone who has treasure
+  for (const otherRole in players) {
+    if(otherRole === role) continue;
+    var o = players[otherRole];
+    if(!o) continue;
+    if(nx===o.x && ny===o.y && !p.has && o.has) {
+      p.has = true; o.has = false;
+      o.x = o.base.x; o.y = o.base.y;
+      break;
+    }
+  }
+
+  // win check
+  if(p.has && nx===p.base.x && ny===p.base.y) {
+    gameActive = false;
+    var msg;
+    if (isSinglePlayer) msg = (role==='p1'?"BẠN":"CPU") + " CHIẾN THẮNG!";
+    else msg = `${role.toUpperCase()} CHIẾN THẮNG!`;
+    showWin(msg);
+    if (!isSinglePlayer) publish('UPDATE', {ply:players, tr:treasure, mons:monsters, win:msg});
+  }
+}
+
+function regenerateMapOnPickup(holder) {
+  var newMap = generateMaze(W, H, 0.15);
+  reduceDeadEnds(newMap, 6);
+
+  var spawnList = [];
+  for (const r in players) {
+    var pl = players[r];
+    newMap[pl.y][pl.x] = T_FLOOR;
+    newMap[pl.base.y][pl.base.x] = T_FLOOR;
+    spawnList.push(pl.base);
+  }
+
+  placeQuizMulti(newMap, spawnList, {x:-999,y:-999});
+  map = newMap;
+
+  monsters = spawnMons(4);
+
+  var msg = "BẢN ĐỒ ĐÃ THAY ĐỔI! VỀ NHÀ NGAY!";
+  showHudMsg(msg);
+  if (!isSinglePlayer) publish('MAP_UPDATE', {map:map, mons:monsters, msg:msg});
+}
+
+// ==========================================
+// 5.1 MONSTER AI (ANTI-TRAP)
+// ==========================================
+function nearestPlayer(from) {
+  var best = null, bestD = 1e9;
+  for (const r in players) {
+    var p = players[r];
+    if(!p) continue;
+    var d = Math.abs(from.x - p.x) + Math.abs(from.y - p.y);
+    if(d < bestD) { bestD = d; best = p; }
+  }
+  return best;
+}
+
+function occSetFromMonsters(mons) {
+  const s = new Set();
+  mons.forEach(m => s.add(`${m.x},${m.y}`));
+  return s;
+}
+
+function playerHasEscape(p, occ) {
+  const dirs = [[0,1],[0,-1],[1,0],[-1,0]];
+  for (const [dx,dy] of dirs) {
+    const nx = p.x + dx, ny = p.y + dy;
+    if (nx<0||nx>=W||ny<0||ny>=H) continue;
+    if (map[ny][nx] === T_WALL) continue;
+    if (occ.has(`${nx},${ny}`)) continue;
+    return true;
+  }
+  return false;
+}
+
+function moveWouldTrapAnyone(simMonsters) {
+  const occ = occSetFromMonsters(simMonsters);
+  for (const r in players) {
+    const p = players[r];
+    if (!p) continue;
+    if (!playerHasEscape(p, occ)) return true;
+  }
+  return false;
+}
+
+function updateMons() {
+  monsters.forEach((m, idx) => {
+    var target = nearestPlayer(m);
+
+    const candidates = [];
+    const step = target ? bfsPath(map, m, target, target, []) : null;
+    if (step) candidates.push(step);
+
+    const dirs = [[0,1],[0,-1],[1,0],[-1,0]];
+    for (const [dx,dy] of dirs) {
+      const nx = m.x + dx, ny = m.y + dy;
+      if (nx<0||nx>=W||ny<0||ny>=H) continue;
+      if (map[ny][nx] === T_WALL) continue;
+      candidates.push({x:nx, y:ny});
+    }
+
+    const lastKey = (m.lx !== undefined) ? `${m.lx},${m.ly}` : null;
+    let chosen = null;
+
+    for (const c of candidates) {
+      const cKey = `${c.x},${c.y}`;
+      if (lastKey && cKey === lastKey && candidates.length > 1) continue;
+
+      const sim = monsters.map((mm, j) => j === idx ? ({x:c.x,y:c.y}) : ({x:mm.x,y:mm.y}));
+      if (!moveWouldTrapAnyone(sim)) { chosen = c; break; }
+    }
+
+    if (!chosen) chosen = {x:m.x, y:m.y};
+
+    m.lx = m.x; m.ly = m.y;
+    m.x = chosen.x; m.y = chosen.y;
+
+    for (const r in players) {
+      const p = players[r];
+      if(!p) continue;
+      if (m.x === p.x && m.y === p.y) {
+        if (p.has) { p.has = false; treasure = {x:p.x, y:p.y}; }
+        p.x = p.base.x; p.y = p.base.y;
+      }
+    }
+  });
+}
+
+// ==========================================
+// 6. ALGORITHMS (MAZE + ANTI-DEAD-END)
+// ==========================================
+function generateMaze(w,h, loops=0.1) {
+  var g = Array(h).fill().map(()=>Array(w).fill(T_WALL));
+  for(var y=1;y<h;y+=2)for(var x=1;x<w;x+=2) g[y][x]=T_FLOOR;
+
+  var s=[{x:1,y:1}], v=new Set(['1,1']);
+  while(s.length){
+    var cur=s[s.length-1], x=cur.x, y=cur.y, n=[];
+    [[2,0],[-2,0],[0,2],[0,-2]].forEach(([dx,dy])=>{
+      var nx=x+dx,ny=y+dy;
+      if(nx>0&&nx<w-1&&ny>0&&ny<h-1&&!v.has(`${nx},${ny}`)) n.push({nx,ny,dx,dy});
+    });
+    if(n.length){
+      var c=n[Math.floor(Math.random()*n.length)];
+      g[y+c.dy/2][x+c.dx/2]=T_FLOOR;
+      v.add(`${c.nx},${c.ny}`);
+      s.push({x:c.nx,y:c.ny});
+    } else s.pop();
+  }
+
+  var walls=[];
+  for(var yy=1;yy<h-1;yy++)for(var xx=1;xx<w-1;xx++) if(g[yy][xx]===T_WALL) walls.push({x:xx,y:yy});
+  for(var i=0; i<walls.length*loops; i++) {
+    var ww = walls[Math.floor(Math.random()*walls.length)];
+    if(ww.x>0 && ww.x<w-1 && ww.y>0 && ww.y<h-1) g[ww.y][ww.x] = T_FLOOR;
+  }
+  return g;
+}
+
+function isPassableCell(t) { return t !== T_WALL; }
+
+function exitCount(g, x, y) {
+  let c = 0;
+  const dirs = [[0,1],[0,-1],[1,0],[-1,0]];
+  for (const [dx,dy] of dirs) {
+    const nx = x + dx, ny = y + dy;
+    if (nx<0||nx>=W||ny<0||ny>=H) continue;
+    if (isPassableCell(g[ny][nx])) c++;
+  }
+  return c;
+}
+
+function carveOneExit(g, x, y) {
+  const dirs = [[0,1],[0,-1],[1,0],[-1,0]];
+  const opts = [];
+
+  for (const [dx,dy] of dirs) {
+    const nx = x + dx, ny = y + dy;
+    if (nx<=0||nx>=W-1||ny<=0||ny>=H-1) continue;
+    if (g[ny][nx] !== T_WALL) continue;
+
+    const bx = nx + dx, by = ny + dy;
+    const score = (bx>=0&&bx<W&&by>=0&&by<H && isPassableCell(g[by][bx])) ? 2 : 1;
+    opts.push({nx, ny, score});
+  }
+
+  if (!opts.length) return false;
+  opts.sort((a,b) => (b.score - a.score) || (Math.random() - 0.5));
+  g[opts[0].ny][opts[0].nx] = T_FLOOR;
+  return true;
+}
+
+function reduceDeadEnds(g, passes = 6) {
+  for (let pass = 0; pass < passes; pass++) {
+    let changed = 0;
+    for (let y = 1; y < H-1; y++) for (let x = 1; x < W-1; x++) {
+      if (!isPassableCell(g[y][x])) continue;
+      const deg = exitCount(g, x, y);
+      if (deg <= 1) if (carveOneExit(g, x, y)) changed++;
+    }
+    if (changed === 0) break;
+  }
+}
+
+function bfsPath(grid, start, t1, t2, dangerous = []) {
+  var q = [{x:start.x, y:start.y, p:null}], v = new Set([`${start.x},${start.y}`]);
+  var found = null;
+  var maxSteps = 1400;
+
+  if (!t1 || !t2) return null;
+
+  var head=0;
+  while(head < q.length && head < maxSteps) {
+    var curr = q[head++];
+    if((curr.x===t1.x && curr.y===t1.y) || (curr.x===t2.x && curr.y===t2.y)) { found = curr; break; }
+    [[0,1],[0,-1],[1,0],[-1,0]].forEach(([dx,dy])=>{
+      var nx=curr.x+dx, ny=curr.y+dy;
+      if(nx>=0&&nx<W&&ny>=0&&ny<h-1&& grid[ny][nx]!==T_WALL && !v.has(`${nx},${ny}`)) {
+        var safe = true;
+        for(var m of dangerous) if (m.x === nx && m.y === ny) { safe = false; break; }
+        if (safe) { v.add(`${nx},${ny}`); q.push({x:nx, y:ny, p:curr}); }
+      }
+    });
+  }
+  if(!found) return null;
+  while(found.p && found.p.p) found = found.p;
+  return {x:found.x, y:found.y};
+}
+
+function dist(a,b){ return Math.abs(a.x-b.x)+Math.abs(a.y-b.y); }
+
+function pickTreasureMulti(g, spawns) {
+  var cand = [];
+  for(var y=0;y<H;y++)for(var x=0;x<W;x++){
+    if(g[y][x]!==T_FLOOR) continue;
+    var ok = true;
+    for (var s of spawns) if(dist({x,y}, s) <= 10) { ok=false; break; }
+    if(ok) cand.push({x,y});
+  }
+  return cand.length ? cand[Math.floor(Math.random()*cand.length)] : {x:20,y:12};
+}
+
+function placeQuizMulti(g, spawns, tr) {
+  var cand = [];
+  for(var y=0;y<H;y++)for(var x=0;x<W;x++){
+    if(g[y][x]!==T_FLOOR) continue;
+    var ok = true;
+    for (var s of spawns) if(dist({x,y}, s) <= 5) { ok=false; break; }
+    if(ok && tr && dist({x,y}, tr) <= 5) ok = false;
+    if(ok) cand.push({x,y});
+  }
+  for(var i=0; i<16; i++) {
+    if(!cand.length) break;
+    var idx = Math.floor(Math.random()*cand.length);
+    var p = cand.splice(idx,1)[0];
+    g[p.y][p.x] = T_QUIZ;
+  }
+}
+
+function spawnMons(c) {
+  var m=[]; var floors=[];
+  var blocked = new Set();
+  for(const r in players){
+    var p = players[r];
+    if(!p) continue;
+    blocked.add(`${p.x},${p.y}`);
+    blocked.add(`${p.base.x},${p.base.y}`);
+  }
+  for(var y=0;y<H;y++)for(var x=0;x<W;x++) {
+    if(map[y][x]===T_FLOOR && !blocked.has(`${x},${y}`)) floors.push({x,y});
+  }
+  if(!floors.length) floors.push({x:20,y:12});
+  for(var i=0;i<c;i++) m.push({...floors[Math.floor(Math.random()*floors.length)]});
+  return m;
+}
+
+// ==========================================
+// 7. INPUT HANDLING
+// ==========================================
+window.addEventListener('keydown', e => { keys[e.key] = true; });
+window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+function updateInput() {
+  if (isQuiz || !gameActive) return;
+  if (!myRole || !players[myRole]) return;
+
+  var now = Date.now();
+  if (now - lastInputTime < INPUT_DELAY) return;
+
+  var dx = 0, dy = 0;
+  if (keys['ArrowUp'] || keys['w']) dy = -1;
+  else if (keys['ArrowDown'] || keys['s']) dy = 1;
+  else if (keys['ArrowLeft'] || keys['a']) dx = -1;
+  else if (keys['ArrowRight'] || keys['d']) dx = 1;
+
+  if (dx !== 0 || dy !== 0) {
+    myMove(dx, dy);
+    lastInputTime = now;
+  }
+}
+
+function myMove(dx, dy) {
+  if (!myRole || !players[myRole]) return;
+
+  var me = players[myRole];
+  var nx = me.x+dx, ny = me.y+dy;
+  if(nx<0||nx>=W||ny<0||ny>=H) return;
+  if(map[ny][nx]===T_WALL) return;
+
+  if(map[ny][nx]===T_QUIZ) {
+    keys = {};
+    showQuiz(() => performMove(dx, dy));
+  } else {
+    performMove(dx, dy);
+  }
+}
+
+function performMove(dx, dy) {
+  if (isHost) {
+    processMove(myRole, dx, dy);
+  } else {
+    var me = players[myRole];
+    if(me){ me.x += dx; me.y += dy; }
+    publish('MOVE', {dx:dx, dy:dy});
+  }
+}
+
+function showQuiz(cb) {
+  isQuiz = true; quizCb = cb;
+  var a=Math.floor(Math.random()*50), b=Math.floor(Math.random()*50);
+  var ans = a+b;
+  var opts = [ans, ans+1, ans-1, ans+10].sort(()=>Math.random()-0.5);
+
+  document.getElementById('q-text').innerText = `${a} + ${b} = ?`;
+  var html = '';
+  opts.forEach(o => html += `<button class="q-btn" onclick="ansQuiz(${o}, ${ans})">${o}</button>`);
+  document.getElementById('q-opts').innerHTML = html;
+  document.getElementById('q-feedback').innerText = "";
+  document.getElementById('quiz-modal').style.display = 'flex';
+}
+
+window.ansQuiz = function(val, corr) {
+  if(val === corr) {
+    document.getElementById('q-feedback').innerHTML = "<span style='color:#4ecdc4'>ĐÚNG!</span>";
+    setTimeout(() => {
+      document.getElementById('quiz-modal').style.display='none';
+      isQuiz=false; if(quizCb) quizCb();
+    }, 500);
+  } else {
+    document.getElementById('q-feedback').innerHTML = "<span style='color:#ff6b6b'>SAI! BẠN BỊ CHẶN.</span>";
+    setTimeout(() => {
+      document.getElementById('quiz-modal').style.display='none';
+      isQuiz=false;
+    }, 800);
+  }
+};
+
+// Mobile controls
+document.querySelectorAll('.btn-d').forEach(b => {
+  const start = (e) => {
+    e.preventDefault();
+    var k=b.dataset.key;
+    if(k==='u') keys['w']=true;
+    if(k==='d') keys['s']=true;
+    if(k==='l') keys['a']=true;
+    if(k==='r') keys['d']=true;
+  };
+  const end = (e) => {
+    e.preventDefault();
+    var k=b.dataset.key;
+    if(k==='u') keys['w']=false;
+    if(k==='d') keys['s']=false;
+    if(k==='l') keys['a']=false;
+    if(k==='r') keys['d']=false;
+  };
+  b.addEventListener('touchstart', start); b.addEventListener('touchend', end);
+  b.addEventListener('mousedown', start); b.addEventListener('mouseup', end);
+});
+
+// ==========================================
+// 8. RENDER
+// ==========================================
+var cvs=document.getElementById('cvs'), ctx=cvs.getContext('2d');
+
+function loop() {
+  if(isLooping) {
+    updateInput();
+    draw();
+    requestAnimationFrame(loop);
+  }
+}
+
+function draw() {
+  ctx.fillStyle = COLORS.FLOOR;
+  ctx.fillRect(0,0,cvs.width,cvs.height);
+  if(!map.length) return;
+
+  for(var y=0; y<H; y++) for(var x=0; x<W; x++) {
+    var t = map[y][x];
+    if(t===T_WALL) {
+      ctx.fillStyle = COLORS.WALL;
+      ctx.beginPath();
+      if(ctx.roundRect) ctx.roundRect(x*TILE, y*TILE, TILE, TILE, 2);
+      else ctx.rect(x*TILE, y*TILE, TILE, TILE);
+      ctx.fill();
+    }
+    if(t===T_QUIZ) {
+      ctx.fillStyle = COLORS.PURPLE;
+      ctx.beginPath(); ctx.arc(x*TILE+TILE/2, y*TILE+TILE/2, TILE/2-2, 0, 6.28); ctx.fill();
+      ctx.fillStyle = "#fff"; ctx.font = "bold 10px sans-serif"; ctx.textAlign="center";
+      ctx.fillText("?", x*TILE+TILE/2, y*TILE+TILE/2+4);
+    }
+  }
+
+  ctx.strokeStyle = COLORS.GRID; ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  for(var i=0; i<=W; i++) { ctx.moveTo(i*TILE,0); ctx.lineTo(i*TILE,H*TILE); }
+  for(var j=0; j<=H; j++) { ctx.moveTo(0,j*TILE); ctx.lineTo(W*TILE,j*TILE); }
+  ctx.stroke();
+
+  for(const r in players){
+    var p = players[r]; if(!p) continue;
+    ctx.fillStyle = p.c;
+    ctx.globalAlpha = 0.22;
+    ctx.fillRect(p.base.x*TILE, p.base.y*TILE, TILE, TILE);
+  }
+  ctx.globalAlpha = 1.0;
+
+  if(treasure) {
+    ctx.fillStyle=COLORS.YELLOW;
+    ctx.beginPath();
+    ctx.moveTo(treasure.x*TILE+TILE/2, treasure.y*TILE+2);
+    ctx.lineTo(treasure.x*TILE+TILE-2, treasure.y*TILE+TILE/2);
+    ctx.lineTo(treasure.x*TILE+TILE/2, treasure.y*TILE+TILE-2);
+    ctx.lineTo(treasure.x*TILE+2, treasure.y*TILE+TILE/2);
+    ctx.fill();
+  }
+
+  for(const r in players) {
+    var p=players[r]; if(!p) continue;
+    ctx.fillStyle=p.c;
+    ctx.beginPath(); ctx.arc(p.x*TILE+TILE/2, p.y*TILE+TILE/2, TILE/2-1, 0, 6.28); ctx.fill();
+    if(p.has) {
+      ctx.strokeStyle=COLORS.YELLOW; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(p.x*TILE+TILE/2, p.y*TILE+TILE/2, TILE/2+2, 0, 6.28); ctx.stroke();
+    }
+  }
+
+  ctx.fillStyle=COLORS.MONSTER;
+  monsters.forEach(m => {
+    var cx = m.x*TILE+TILE/2, cy = m.y*TILE+TILE/2;
+    ctx.beginPath();
+    ctx.arc(cx, cy-2, TILE/3, Math.PI, 0);
+    ctx.lineTo(cx+TILE/3, cy+TILE/3);
+    ctx.lineTo(cx-TILE/3, cy+TILE/3);
+    ctx.fill();
+  });
+
+  var roleText = isSinglePlayer ? `${myName || 'Bạn'} vs CPU` : (myRole ? `${myName || 'Bạn'} (${myRole.toUpperCase()})` : "ĐANG GÁN VAI TRÒ...");
+  document.getElementById('game-msg').innerText = roleText;
+}
+
+function resize(){
+  var w=window.innerWidth, h=window.innerHeight;
+  TILE = Math.min(Math.floor((w-20)/W), Math.floor((h-80)/H));
+  TILE = Math.max(14, TILE);
+  cvs.width=W*TILE; cvs.height=H*TILE;
+}
+window.addEventListener('resize', resize);
+
+function showHudMsg(msg) { document.getElementById('sub-msg').innerText = msg; }
+function showWin(msg) {
+  document.getElementById('end-screen').style.display='flex';
+  document.getElementById('win-msg').innerText = msg;
+}
+</script>
+</body>
+</html>
