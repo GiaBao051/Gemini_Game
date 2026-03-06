@@ -369,7 +369,7 @@ const CFG = {
   W: 41, H: 25, TILE: 16,       // kích thước mê cung & ô
   T_FLOOR: 0, T_WALL: 1, T_QUIZ: 2,
   MAX_PLAYERS: 4,
-  MONSTER_MOVE_MS: 700,          // chu kỳ quái di chuyển
+  MONSTER_MOVE_MS: 450,          // chu kỳ quái di chuyển
   TRAP_LIMIT: 3,                 // số bẫy tối đa mỗi người
   TRAP_TTL: 12000,               // thời gian sống của bẫy (ms)
   STUN_MS: 2500,                 // thời gian bị stun
@@ -396,7 +396,6 @@ const CFG = {
     { q:'Nước sôi ở °C?', opts:['90','95','100','105'], ans:2 },
     { q:'Tốc độ ánh sáng ≈ km/s?', opts:['100k','300k','500k','1000k'], ans:1 },
     { q:'12 × 12 = ?', opts:['124','132','144','148'], ans:2 },
-    { q:'Việt Nam có bao nhiêu tỉnh/thành?', opts:['58','61','63','65'], ans:2 },
     { q:'Hóa học: O2 là chất gì?', opts:['Héli','Hidro','Oxy','Nitơ'], ans:2 },
     { q:'Cây quang hợp hấp thụ khí gì?', opts:['O2','CO2','N2','H2'], ans:1 },
     { q:'1 km = ? m', opts:['10','100','1000','10000'], ans:2 },
@@ -854,6 +853,367 @@ function aStarSafe(grid, gcResult, dangerZones, sx,sy, tx,ty, W,H, dangerWeight=
 }
 
 /* ================================================================
+   PHẦN 3 – UNIFORM COST SEARCH / DIJKSTRA AN TOÀN
+   Khác với aStarSafe (dùng zone-level danger từ graph coloring),
+   dijkstraSafe dùng cell-level danger từ INF_MAP → chính xác hơn.
+   Khi nào dùng:
+     BFS          → CPU easy / pathfinding đơn giản
+     A*           → CPU normal / cần nhanh + heuristic
+     aStarSafe    → CPU hard khi chưa có INF_MAP (khởi tạo)
+     dijkstraSafe → CPU hard sau khi INF_MAP đã build (runtime)
+   ================================================================ */
+
+/**
+ * Uniform Cost Search với chi phí ô động từ INF_MAP.
+ * @param {string} costMode 'safe' = né nguy hiểm tối đa,
+ *                          'seek' = sẵn sàng đi qua nguy hiểm để đến đích nhanh hơn
+ */
+function dijkstraSafe(grid, sx, sy, tx, ty, W, H, costMode = 'safe') {
+  if (sx === tx && sy === ty) return [];
+  const INF = 1e9;
+  const dist = new Float32Array(W * H).fill(INF);
+  const prev = new Int32Array(W * H).fill(-1);
+  const start = sy * W + sx;
+  dist[start] = 0;
+  // Min-heap đơn giản: sorted array (ổn với maze 41×25 ~1000 node)
+  const open = [{ i: start, g: 0 }];
+  const dxs = [1,-1,0,0], dys = [0,0,1,-1];
+  while (open.length) {
+    open.sort((a, b) => a.g - b.g);
+    const { i: cur, g: curG } = open.shift();
+    if (curG > dist[cur]) continue;
+    const cx = cur % W, cy = Math.floor(cur / W);
+    if (cx === tx && cy === ty) {
+      const path = [];
+      let node = ty * W + tx;
+      while (node !== start) {
+        const p = prev[node];
+        path.unshift({ dx: node % W - p % W, dy: Math.floor(node / W) - Math.floor(p / W) });
+        node = p;
+      }
+      return path;
+    }
+    for (let d = 0; d < 4; d++) {
+      const nx = cx + dxs[d], ny = cy + dys[d];
+      if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+      if (grid[ny * W + nx] === CFG.T_WALL) continue;
+      const ni = ny * W + nx;
+      // Chi phí cơ bản = 1
+      let cellCost = 1;
+      // Tăng chi phí theo danger map (nếu đã build)
+      if (INF_MAP.danger) {
+        const d2 = INF_MAP.danger[ni];
+        cellCost += costMode === 'safe' ? d2 * 3 : d2 * 0.5;
+      }
+      // Quiz cell: tốn thêm 3 (sẽ mất thời gian trả lời quiz)
+      if (grid[ni] === CFG.T_QUIZ) cellCost += 3;
+      // Choke point kiểm soát bởi đối thủ: tránh hơn khi 'safe'
+      if (costMode === 'safe' && CHOKE_CACHE.points.some(cp => cp.x === nx && cp.y === ny))
+        cellCost += 4;
+      const ng = dist[cur] + cellCost;
+      if (ng < dist[ni]) {
+        dist[ni] = ng; prev[ni] = cur;
+        open.push({ i: ni, g: ng });
+      }
+    }
+  }
+  return bfs(grid, sx, sy, tx, ty, W, H); // fallback BFS nếu UCS không đến được
+}
+
+/* ================================================================
+   PHẦN 4 – INFLUENCE MAP / DANGER MAP
+   Mỗi ô (x,y) có 2 điểm:
+     danger(x,y)      – từ quái, bẫy, enemy, choke point
+     opportunity(x,y) – từ treasure, holder, base của CPU
+   CPU dùng map này để né vùng chết và chọn đường tấn công
+   ================================================================ */
+
+// Module-level storage cho influence map
+const INF_MAP = {
+  danger:       null,  // Float32Array(W*H)
+  opportunity:  null,  // Float32Array(W*H)
+  lastSeed:     -1,    // seed khi build lần cuối
+  debugOverlay: false, // [I] bật/tắt overlay debug
+};
+
+/**
+ * Rebuild influence map từ trạng thái game hiện tại.
+ * Gọi mỗi khi quái / người chơi di chuyển đáng kể.
+ */
+function buildInfluenceMap() {
+  const W = CFG.W, H = CFG.H;
+  if (!GS.grid) return;
+  const danger      = new Float32Array(W * H);
+  const opportunity = new Float32Array(W * H);
+
+  // Hàm lan tỏa điểm theo bán kính Manhattan
+  const spread = (arr, cx, cy, baseVal, radius) => {
+    for (let y = Math.max(0, cy - radius); y <= Math.min(H-1, cy + radius); y++) {
+      for (let x = Math.max(0, cx - radius); x <= Math.min(W-1, cx + radius); x++) {
+        if (GS.grid[y * W + x] === CFG.T_WALL) continue;
+        const d = Math.abs(x - cx) + Math.abs(y - cy);
+        if (d > radius) continue;
+        arr[y * W + x] += baseVal * (1 - d / (radius + 1));
+      }
+    }
+  };
+
+  // ── Nguy hiểm từ quái vật (bán kính 5, giá trị 10) ──
+  for (const m of GS.monsters)
+    spread(danger, m.x, m.y, 10, 5);
+
+  // ── Nguy hiểm từ bẫy hiện có (bán kính 2, giá trị 6) ──
+  for (const t of GS.traps)
+    spread(danger, t.x, t.y, 6, 2);
+
+  // ── Nguy hiểm / cơ hội từ người chơi ──
+  for (const p of GS.players) {
+    if (!p.alive) continue;
+    const isCpu = p.isBot;
+    // Enemy gây danger nhẹ (bán kính 3)
+    if (!isCpu) spread(danger, p.x, p.y, 3, 3);
+    // Holder mang treasure → cơ hội cao (bán kính 4) cho CPU
+    if (p.has && !isCpu) spread(opportunity, p.x, p.y, 8, 4);
+    // CPU holder cần về base → đối thủ là nguy hiểm
+    if (p.has && isCpu)  spread(danger, p.x, p.y, 1, 2);
+  }
+
+  // ── Cơ hội từ treasure tự do (bán kính 6) ──
+  if (GS.treasure && GS.treasureHolder === -1)
+    spread(opportunity, GS.treasure.x, GS.treasure.y, 10, 6);
+
+  // ── Cơ hội từ base của CPU (bán kính 3) ──
+  const cpu = GS.players.find(p => p.isBot);
+  if (cpu) {
+    const base = CFG.PLAYER_BASES[cpu.idx];
+    spread(opportunity, base.x, base.y, 5, 3);
+  }
+
+  // ── Nguy hiểm thêm tại choke points (từ cache đã tính) ──
+  for (const cp of CHOKE_CACHE.points.slice(0, 10))
+    spread(danger, cp.x, cp.y, 2, 1);
+
+  INF_MAP.danger      = danger;
+  INF_MAP.opportunity = opportunity;
+  INF_MAP.lastSeed    = GS.seed;
+}
+
+/** Lấy điểm nguy hiểm tại ô (x,y). */
+function getCellDanger(x, y) {
+  if (!INF_MAP.danger) return 0;
+  const i = y * CFG.W + x;
+  return (i >= 0 && i < INF_MAP.danger.length) ? INF_MAP.danger[i] : 0;
+}
+
+/** Lấy điểm cơ hội tại ô (x,y). */
+function getCellOpportunity(x, y) {
+  if (!INF_MAP.opportunity) return 0;
+  const i = y * CFG.W + x;
+  return (i >= 0 && i < INF_MAP.opportunity.length) ? INF_MAP.opportunity[i] : 0;
+}
+
+/* ================================================================
+   PHẦN 5 – CHOKE POINT / ARTICULATION POINT / BRIDGE ANALYSIS
+   Dùng thuật toán Tarjan DFS (iterative, tránh stackoverflow)
+   Articulation point = nút mà xóa đi sẽ tăng số thành phần liên thông
+   Bridge = cạnh mà xóa đi sẽ tăng số thành phần liên thông
+   ================================================================ */
+
+// Cache choke points theo seed maze (tránh tính lại mỗi frame)
+const CHOKE_CACHE = {
+  points:   [],      // [{x,y,rank}] xếp hạng chiến lược
+  bridges:  [],      // [{x1,y1,x2,y2}]
+  lastSeed: -1,
+};
+
+/**
+ * Xây adjacency list từ tất cả floor cells.
+ * @returns {{nodes: {x,y}[], adj: number[][], nodeIdx: Int32Array}}
+ */
+function buildMazeGraph(grid, W, H) {
+  const nodeIdx = new Int32Array(W * H).fill(-1);
+  const nodes   = [];
+  const dxs = [1,-1,0,0], dys = [0,0,1,-1];
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++)
+      if (grid[y * W + x] !== CFG.T_WALL) {
+        nodeIdx[y * W + x] = nodes.length;
+        nodes.push({ x, y });
+      }
+  const adj = nodes.map(() => []);
+  for (let i = 0; i < nodes.length; i++) {
+    const { x, y } = nodes[i];
+    for (let d = 0; d < 4; d++) {
+      const nx = x + dxs[d], ny = y + dys[d];
+      if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+      const j = nodeIdx[ny * W + nx];
+      if (j >= 0) adj[i].push(j);
+    }
+  }
+  return { nodes, adj, nodeIdx };
+}
+
+/**
+ * Tìm articulation points bằng Tarjan DFS iterative.
+ * @returns {{x,y}[]}
+ */
+function findArticulationPoints(grid, W, H) {
+  const { nodes, adj } = buildMazeGraph(grid, W, H);
+  const n       = nodes.length;
+  const visited = new Uint8Array(n);
+  const disc    = new Int32Array(n);
+  const low     = new Int32Array(n);
+  const parent  = new Int32Array(n).fill(-1);
+  const isAP    = new Uint8Array(n);
+  let timer = 0;
+
+  for (let start = 0; start < n; start++) {
+    if (visited[start]) continue;
+    // Stack mang thông tin: {u, adjIdx, childCount}
+    const stack = [{ u: start, ai: 0, cc: 0 }];
+    visited[start] = 1; disc[start] = low[start] = timer++;
+    while (stack.length) {
+      const top = stack[stack.length - 1];
+      if (top.ai < adj[top.u].length) {
+        const v = adj[top.u][top.ai++];
+        if (!visited[v]) {
+          top.cc++;
+          parent[v] = top.u;
+          visited[v] = 1; disc[v] = low[v] = timer++;
+          stack.push({ u: v, ai: 0, cc: 0 });
+        } else if (v !== parent[top.u]) {
+          low[top.u] = Math.min(low[top.u], disc[v]);
+        }
+      } else {
+        stack.pop();
+        if (stack.length) {
+          const par = stack[stack.length - 1];
+          low[par.u] = Math.min(low[par.u], low[top.u]);
+          // Root AP: ≥2 children; Non-root AP: low[child] >= disc[par]
+          if ((parent[par.u] === -1 && par.cc > 1) ||
+              (parent[par.u] !== -1 && low[top.u] >= disc[par.u]))
+            isAP[par.u] = 1;
+        }
+      }
+    }
+  }
+  const aps = [];
+  for (let i = 0; i < n; i++) if (isAP[i]) aps.push(nodes[i]);
+  return aps;
+}
+
+/**
+ * Tìm bridges bằng Tarjan DFS iterative.
+ * @returns {{x1,y1,x2,y2}[]}
+ */
+function findBridges(grid, W, H) {
+  const { nodes, adj } = buildMazeGraph(grid, W, H);
+  const n       = nodes.length;
+  const visited = new Uint8Array(n);
+  const disc    = new Int32Array(n);
+  const low     = new Int32Array(n);
+  const parent  = new Int32Array(n).fill(-1);
+  let timer = 0;
+  const bridges = [];
+  for (let start = 0; start < n; start++) {
+    if (visited[start]) continue;
+    const stack = [{ u: start, ai: 0 }];
+    visited[start] = 1; disc[start] = low[start] = timer++;
+    while (stack.length) {
+      const top = stack[stack.length - 1];
+      if (top.ai < adj[top.u].length) {
+        const v = adj[top.u][top.ai++];
+        if (!visited[v]) {
+          parent[v] = top.u;
+          visited[v] = 1; disc[v] = low[v] = timer++;
+          stack.push({ u: v, ai: 0 });
+        } else if (v !== parent[top.u]) {
+          low[top.u] = Math.min(low[top.u], disc[v]);
+        }
+      } else {
+        stack.pop();
+        if (stack.length) {
+          const par = stack[stack.length - 1];
+          low[par.u] = Math.min(low[par.u], low[top.u]);
+          if (low[top.u] > disc[par.u])
+            bridges.push({ x1:nodes[par.u].x, y1:nodes[par.u].y, x2:nodes[top.u].x, y2:nodes[top.u].y });
+        }
+      }
+    }
+  }
+  return bridges;
+}
+
+/**
+ * Xếp hạng articulation points theo mức độ chiến lược.
+ * Điểm ranking cao = gần trung tâm map + gần nhiều base = cổ chai quan trọng.
+ */
+function rankChokePoints(grid, W, H) {
+  const aps   = findArticulationPoints(grid, W, H);
+  const cx    = W / 2, cy = H / 2;
+  const bases = CFG.PLAYER_BASES;
+  return aps.map(p => {
+    const distCenter  = Math.abs(p.x - cx) + Math.abs(p.y - cy);
+    const sumBaseDist = bases.reduce((s, b) => s + Math.abs(p.x - b.x) + Math.abs(p.y - b.y), 0);
+    // Rank = trung tâm tốt + đường giữa nhiều base
+    const rank = 1000 / (distCenter + 1) + 500 / (sumBaseDist / bases.length + 1);
+    return { ...p, rank: +rank.toFixed(2) };
+  }).sort((a, b) => b.rank - a.rank);
+}
+
+/** Cập nhật CHOKE_CACHE sau khi generate maze mới. Chỉ tính lại khi seed thay đổi. */
+function updateChokeCache() {
+  if (!GS.grid || CHOKE_CACHE.lastSeed === GS.seed) return;
+  CHOKE_CACHE.points   = rankChokePoints(GS.grid, CFG.W, CFG.H);
+  CHOKE_CACHE.bridges  = findBridges(GS.grid, CFG.W, CFG.H);
+  CHOKE_CACHE.lastSeed = GS.seed;
+}
+
+/* ================================================================
+   PHẦN 7 – MONSTER ASSIGNMENT (Hungarian-like heuristic)
+   Phân công mỗi quái cho một target (người chơi) theo cost matrix
+   Tránh dồn hết quái vào 1 người chơi
+   ================================================================ */
+
+/**
+ * Tính chi phí gán monster cho target.
+ * Chi phí thấp = ưu tiên gán.
+ */
+function computeMonsterAssignmentCost(monster, target) {
+  const dist = Math.abs(monster.x - target.x) + Math.abs(monster.y - target.y);
+  let cost = dist;
+  // Giảm chi phí mạnh nếu target đang cầm treasure → tăng áp lực holder
+  if (target.has) cost -= 10;
+  // Không gán nếu quá xa (> 20 tile): ưu tiên mục tiêu gần hơn
+  if (dist > 20) cost += dist;
+  return Math.max(0, cost);
+}
+
+/**
+ * Greedy assignment: mỗi quái → target có cost min chưa vượt quota.
+ * Đảm bảo mỗi người chơi nhận tối đa ceil(M/N) quái.
+ * @param {object[]} monsters
+ * @param {object[]} players
+ * @returns {object[]} assigned targets (same length as monsters)
+ */
+function assignMonstersToTargets(monsters, players) {
+  const targets = players.filter(p => p.alive !== false);
+  if (targets.length === 0) return monsters.map(() => null);
+  const maxPer   = Math.ceil(monsters.length / targets.length);
+  const assigned = new Array(targets.length).fill(0); // đếm số quái đã gán
+  return monsters.map(m => {
+    let bestTIdx = -1, bestCost = Infinity;
+    for (let ti = 0; ti < targets.length; ti++) {
+      if (assigned[ti] >= maxPer) continue;
+      const cost = computeMonsterAssignmentCost(m, targets[ti]);
+      if (cost < bestCost) { bestCost = cost; bestTIdx = ti; }
+    }
+    if (bestTIdx >= 0) { assigned[bestTIdx]++; return targets[bestTIdx]; }
+    return targets[0]; // fallback
+  });
+}
+
+/* ================================================================
    CSP ENGINE – Constraint Satisfaction Problem placement
    Biến: TreasurePos, MonsterPos[0..M-1], QuizPos[0..N-1]
    Domain: tất cả floor cells, lọc trước theo ràng buộc đơn
@@ -1257,7 +1617,7 @@ function makePlayer(idx, name, isBot=false) {
   };
 }
 function makeMonster(x,y) {
-  return { x, y, rx:x, ry:y, px:x, py:y, lerpT:1, color:'#f80' };
+  return { x, y, rx:x, ry:y, px:x, py:y, lerpT:1, color:'#f80', patrolTarget:null };
 }
 function makeTrap(owner, x, y) {
   return { owner, x, y, createdAt: Date.now(), ttl: CFG.TRAP_TTL };
@@ -1745,52 +2105,168 @@ function hitPlayerByMonster(p) {
   p.px = p.x; p.py = p.y; p.lerpT = 0;
   p.x = b.x; p.y = b.y;
 }
+// Bán kính kích hoạt đuổi theo của quái vật (Manhattan distance)
+const MONSTER_CHASE_RADIUS = 7;
+
 function moveMonsters() {
   if(!GS.running) return;
   const alivePlayers = GS.players.filter(p => p.alive);
   if(!alivePlayers.length) return;
 
+  // ── Phân công quái → người chơi bằng assignment heuristic ──
+  // Mỗi quái được gán 1 target, đảm bảo số quái / người chơi cân bằng
+  const assignments = assignMonstersToTargets(GS.monsters, alivePlayers);
+
   for(let mi = 0; mi < GS.monsters.length; mi++){
     const m = GS.monsters[mi];
     const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
     shuffle(dirs);
-    let tx=m.x, ty=m.y;
+    let tx = m.x, ty = m.y;
 
-    // Phân công mục tiêu: mỗi con quái được giao một người chơi khác nhau
-    // theo vòng tròn (mi % numPlayers) → không dồn vào 1 góc
-    // Nếu quái đang rất gần mục tiêu (<= 2 tile), đổi sang người chơi khác
-    const assignedTarget = alivePlayers[mi % alivePlayers.length];
-    const distToAssigned = Math.abs(m.x-assignedTarget.x)+Math.abs(m.y-assignedTarget.y);
-    let target;
-    if(distToAssigned <= 2 && alivePlayers.length > 1){
-      // Đã dồn sát rồi → chuyển sang người chơi tiếp theo
-      target = alivePlayers[(mi + 1) % alivePlayers.length];
-    } else {
-      target = assignedTarget;
+    const assignedTarget = assignments[mi];
+
+    // ── Tính khoảng cách Manhattan đến target được phân công ──
+    const distToTarget = assignedTarget
+      ? Math.abs(m.x - assignedTarget.x) + Math.abs(m.y - assignedTarget.y)
+      : Infinity;
+
+    // ── Kiểm tra có người chơi nào trong bán kính CHASE_RADIUS không ──
+    // Ưu tiên holder (đang cầm treasure) nếu vào vùng
+    let chaseTarget = null;
+    let minChaseDist = MONSTER_CHASE_RADIUS + 1;
+    for(const p of alivePlayers){
+      const d = Math.abs(m.x - p.x) + Math.abs(m.y - p.y);
+      if(d <= MONSTER_CHASE_RADIUS){
+        // Ưu tiên holder, sau đó người gần nhất
+        if(!chaseTarget || (p.has && !chaseTarget.has) || (d < minChaseDist && p.has === chaseTarget.has)){
+          chaseTarget = p;
+          minChaseDist = d;
+        }
+      }
     }
 
-    if(Math.random() < 0.85){
-      const path = bfs(GS.grid, m.x, m.y, target.x, target.y, CFG.W, CFG.H);
-      if(path && path.length){ tx=m.x+path[0].dx; ty=m.y+path[0].dy; }
-      else { const d=dirs[0]; tx=m.x+d[0]; ty=m.y+d[1]; }
+    if(chaseTarget){
+      // ── CHẾ ĐỘ ĐUỔI: người chơi vào vùng phát hiện → BFS đuổi ──
+      if(Math.random() < 0.9){
+        const path = bfs(GS.grid, m.x, m.y, chaseTarget.x, chaseTarget.y, CFG.W, CFG.H);
+        if(path && path.length){ tx = m.x + path[0].dx; ty = m.y + path[0].dy; }
+        else { const d = dirs[0]; tx = m.x + d[0]; ty = m.y + d[1]; }
+      } else {
+        // 10% ngẫu nhiên để không bị đoán hoàn toàn
+        const d = dirs[0]; tx = m.x + d[0]; ty = m.y + d[1];
+      }
     } else {
-      const d=dirs[0]; tx=m.x+d[0]; ty=m.y+d[1];
+      // ── CHẾ ĐỘ TUẦN TRA: không có ai gần → di chuyển ngẫu nhiên có định hướng ──
+      // Nếu quái có patrol point thì hướng về đó, còn không thì random
+      if(!m.patrolTarget || (m.x === m.patrolTarget.x && m.y === m.patrolTarget.y)){
+        // Chọn patrol point mới: ô floor ngẫu nhiên trong vùng quái đang ở
+        // (không đi quá xa spawn zone ban đầu để giữ phân tán đều)
+        m.patrolTarget = pickPatrolPoint(m, GS.grid, CFG.W, CFG.H);
+      }
+      if(m.patrolTarget && Math.random() < 0.6){
+        const path = bfs(GS.grid, m.x, m.y, m.patrolTarget.x, m.patrolTarget.y, CFG.W, CFG.H);
+        if(path && path.length){ tx = m.x + path[0].dx; ty = m.y + path[0].dy; }
+        else { m.patrolTarget = null; const d = dirs[0]; tx = m.x + d[0]; ty = m.y + d[1]; }
+      } else {
+        // Di chuyển ngẫu nhiên 40% thời gian để trông tự nhiên hơn
+        const d = dirs[0]; tx = m.x + d[0]; ty = m.y + d[1];
+      }
     }
-    // Kiểm tra hợp lệ
+
+    // ── Áp dụng di chuyển ──
     if(tx>=0&&tx<CFG.W&&ty>=0&&ty<CFG.H&&GS.grid[ty*CFG.W+tx]!==CFG.T_WALL){
-      m.px=m.x; m.py=m.y; m.lerpT=0;
-      m.x=tx; m.y=ty;
+      m.px = m.x; m.py = m.y; m.lerpT = 0;
+      m.x = tx; m.y = ty;
+      // Quái đi qua ô quiz → phá hủy (không kích hoạt câu hỏi)
+      if(GS.grid[ty*CFG.W+tx] === CFG.T_QUIZ){
+        GS.grid[ty*CFG.W+tx] = CFG.T_FLOOR;
+      }
     }
-    // Va chạm với người chơi
+
+    // ── Va chạm người chơi ──
     for(const p of GS.players){
-      if(p.x===m.x&&p.y===m.y){
+      if(p.x === m.x && p.y === m.y){
         hitPlayerByMonster(p);
       }
     }
   }
+
   if(GS.mode==='online'&&GS.isHost){
     mqttPublish({type:'MONS', mons:GS.monsters.map(m=>({x:m.x,y:m.y}))});
   }
+}
+
+/**
+ * Chọn ngẫu nhiên một ô floor làm patrol point,
+ * ưu tiên ở trong vùng 10 tile xung quanh quái để giữ phân tán.
+ */
+function pickPatrolPoint(monster, grid, W, H) {
+  const radius = 10;
+  const candidates = [];
+  for(let y = Math.max(1, monster.y - radius); y <= Math.min(H-2, monster.y + radius); y++){
+    for(let x = Math.max(1, monster.x - radius); x <= Math.min(W-2, monster.x + radius); x++){
+      if(grid[y*W+x] !== CFG.T_WALL){
+        // Tránh base người chơi
+        if(CFG.PLAYER_BASES.some(b => Math.abs(b.x-x)+Math.abs(b.y-y) < 4)) continue;
+        candidates.push({x, y});
+      }
+    }
+  }
+  if(!candidates.length) return null;
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+/* ================================================================
+   CPU AI – helper pathfinding tránh quái
+   aStarMonsterAware: A* với ô có quái bị penalize nặng.
+   - Thử đường tránh quái trước (penalty cao).
+   - Nếu không có đường nào thực sự tránh được, fallback về A* thông thường.
+   ================================================================ */
+function aStarMonsterAware(grid, monsters, sx, sy, tx, ty, W, H) {
+  if (sx === tx && sy === ty) return [];
+  // Build set vị trí quái để tra cứu O(1)
+  const monSet = new Set(monsters.map(m => m.y * W + m.x));
+  const heur   = (x, y) => Math.abs(x - tx) + Math.abs(y - ty);
+  const INF    = 1e9;
+  const gScore = new Float32Array(W * H).fill(INF);
+  const prev   = new Int32Array(W * H).fill(-1);
+  const open   = [];
+  const start  = sy * W + sx;
+  gScore[start] = 0;
+  open.push({ i: start, f: heur(sx, sy) });
+  const dxs = [1,-1,0,0], dys = [0,0,1,-1];
+
+  while (open.length) {
+    open.sort((a, b) => a.f - b.f);
+    const { i: cur } = open.shift();
+    if (gScore[cur] === INF) continue;
+    const cx = cur % W, cy = Math.floor(cur / W);
+    if (cx === tx && cy === ty) {
+      const path = [];
+      let node = ty * W + tx;
+      while (node !== start) {
+        const p = prev[node];
+        path.unshift({ dx: node % W - p % W, dy: Math.floor(node / W) - Math.floor(p / W) });
+        node = p;
+      }
+      return path;
+    }
+    for (let d = 0; d < 4; d++) {
+      const nx = cx + dxs[d], ny = cy + dys[d];
+      if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+      if (grid[ny * W + nx] === CFG.T_WALL) continue;
+      const ni  = ny * W + nx;
+      // Ô đang có quái → chi phí rất cao (không phải tường, vẫn đi được nhưng cực kỳ không muốn)
+      const penalty = monSet.has(ni) ? 50 : 0;
+      const ng = gScore[cur] + 1 + penalty;
+      if (ng < gScore[ni]) {
+        gScore[ni] = ng; prev[ni] = cur;
+        open.push({ i: ni, f: ng + heur(nx, ny) });
+      }
+    }
+  }
+  // Fallback: nếu mọi đường đều qua quái, dùng BFS bình thường
+  return bfs(grid, sx, sy, tx, ty, W, H);
 }
 
 /* ================================================================
@@ -1805,46 +2281,79 @@ function cpuTick() {
   
   if(GS.cpuDiff==='easy'){
     // Dễ: di chuyển ngẫu nhiên, thỉnh thoảng hướng tới kho báu
+    // Nhưng vẫn tránh ô đang có quái trực tiếp
     if(Math.random()<0.3){
       target = GS.treasureHolder===-1 ? GS.treasure : (cpu.has ? CFG.PLAYER_BASES[cpu.idx] : GS.treasure);
     }
     if(!target){
+      const monSet = new Set(GS.monsters.map(m => m.y*CFG.W+m.x));
       const dirs=shuffle([[1,0],[-1,0],[0,1],[0,-1]]);
-      for(const [dx,dy] of dirs){
+      // Ưu tiên hướng không có quái; nếu bị chặn hoàn toàn mới đi qua quái
+      const safeDirs = dirs.filter(([dx,dy])=>{
         const nx=cpu.x+dx, ny=cpu.y+dy;
-        if(nx>=0&&nx<CFG.W&&ny>=0&&ny<CFG.H&&GS.grid[ny*CFG.W+nx]!==CFG.T_WALL){
-          doMovePlayer(cpu.idx,dx,dy); return;
-        }
-      }
+        return nx>=0&&nx<CFG.W&&ny>=0&&ny<CFG.H
+          &&GS.grid[ny*CFG.W+nx]!==CFG.T_WALL
+          &&!monSet.has(ny*CFG.W+nx);
+      });
+      const fallbackDirs = dirs.filter(([dx,dy])=>{
+        const nx=cpu.x+dx, ny=cpu.y+dy;
+        return nx>=0&&nx<CFG.W&&ny>=0&&ny<CFG.H&&GS.grid[ny*CFG.W+nx]!==CFG.T_WALL;
+      });
+      const pick = (safeDirs.length ? safeDirs : fallbackDirs)[0];
+      if(pick){ doMovePlayer(cpu.idx,pick[0],pick[1]); }
       return;
     }
   } else {
-    // Thường/Khó: A* / BFS tới mục tiêu
+    // Thường/Khó: tới mục tiêu chiến lược
     if(cpu.has){
       target=CFG.PLAYER_BASES[cpu.idx]; // mang về base
     } else if(GS.treasureHolder>=0&&GS.treasureHolder!==cpu.idx){
-      // Cướp kho báu
+      // Cướp kho báu từ holder
       const holder=GS.players[GS.treasureHolder];
       if(holder) target={x:holder.x,y:holder.y};
     } else {
       target=GS.treasure; // tìm kho báu
     }
   }
-  
+
   if(!target) return;
-  
+
   let path;
   if(GS.cpuDiff==='hard' && GS.gcResult){
-    // CPU khó: A* tránh vùng nguy hiểm (nhiều quái / người giữ kho báu)
-    const danger = computeZoneDanger(GS.gcResult, GS.monsters, GS.players, cpu.idx, CFG.W);
-    path = aStarSafe(GS.grid, GS.gcResult, danger, cpu.x,cpu.y, target.x,target.y, CFG.W,CFG.H, 2);
+    // Khó: ưu tiên dijkstraSafe (cell-level danger từ INF_MAP) nếu đã build;
+    // nếu chưa có INF_MAP thì dùng aStarMonsterAware tránh quái trực tiếp
+    buildInfluenceMap(); // đảm bảo INF_MAP mới
+    if(INF_MAP.danger){
+      path = dijkstraSafe(GS.grid, cpu.x, cpu.y, target.x, target.y, CFG.W, CFG.H, 'safe');
+    } else {
+      const danger = computeZoneDanger(GS.gcResult, GS.monsters, GS.players, cpu.idx, CFG.W);
+      path = aStarSafe(GS.grid, GS.gcResult, danger, cpu.x,cpu.y, target.x,target.y, CFG.W,CFG.H, 2);
+    }
   } else {
-    // Easy/Normal: BFS đơn giản
-    path = bfs(GS.grid, cpu.x,cpu.y, target.x,target.y, CFG.W,CFG.H);
+    // Normal/Easy (khi có target): A* tránh ô có quái
+    path = aStarMonsterAware(GS.grid, GS.monsters, cpu.x, cpu.y, target.x, target.y, CFG.W, CFG.H);
   }
-  if(path&&path.length){
-    const {dx,dy}=path[0];
-    doMovePlayer(cpu.idx,dx,dy);
+
+  // Kiểm tra bước đầu có đi thẳng vào quái không → nếu có, thử làm mới path
+  if(path && path.length){
+    const nx=cpu.x+path[0].dx, ny=cpu.y+path[0].dy;
+    const stepOnMonster = GS.monsters.some(m=>m.x===nx&&m.y===ny);
+    if(stepOnMonster){
+      // Tìm bước bên cạnh không có quái
+      const dxs=[1,-1,0,0], dys=[0,0,1,-1];
+      let escaped=false;
+      for(let d=0;d<4;d++){
+        const ax=cpu.x+dxs[d], ay=cpu.y+dys[d];
+        if(ax<0||ax>=CFG.W||ay<0||ay>=CFG.H) continue;
+        if(GS.grid[ay*CFG.W+ax]===CFG.T_WALL) continue;
+        if(GS.monsters.some(m=>m.x===ax&&m.y===ay)) continue;
+        doMovePlayer(cpu.idx,dxs[d],dys[d]);
+        escaped=true; break;
+      }
+      if(!escaped) doMovePlayer(cpu.idx,path[0].dx,path[0].dy); // kẹt hoàn toàn, đành đi
+      return;
+    }
+    doMovePlayer(cpu.idx,path[0].dx,path[0].dy);
   }
 }
 
