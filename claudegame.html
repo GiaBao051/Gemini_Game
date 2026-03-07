@@ -367,13 +367,16 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
   <div style="margin-top:6px;border-top:1px solid #6af4;padding-top:6px;color:#9cf;">🤖 CPU AI</div>
   <div id="dbg-cpu-state" style="font-size:.68rem;">State: --</div>
   <div id="dbg-cpu-target" style="font-size:.68rem;">Target: --</div>
+  <div id="dbg-cpu-tactical" style="font-size:.65rem;color:#bff;">Tactical: --</div>
   <div id="dbg-choke-stats" style="font-size:.65rem;color:#bfe;">Chokes: --</div>
   <div id="dbg-choke-top" style="font-size:.65rem;color:#9fd;">Top choke: --</div>
   <div id="dbg-choke-cpu" style="font-size:.65rem;color:#8ef;">CPU choke target: --</div>
   <div id="dbg-cpu-reason" style="font-size:.65rem;color:#cef;">Reason: --</div>
   <div id="dbg-cpu-minimax" style="font-size:.65rem;color:#9fe;">Minimax: --</div>
+  <div id="dbg-cpu-miniact" style="font-size:.65rem;color:#8fd;">Minimax best action: --</div>
   <div id="dbg-cpu-utils" style="max-height:90px;overflow-y:auto;font-size:.63rem;color:#bdf;">Utility: --</div>
-  <div style="margin-top:6px;color:#ff0;">[G] Graph overlay | [I] Influence overlay | [F12→console] mapQualityReport()</div>
+  <div style="margin-top:6px;color:#ff0;">[G] Graph overlay | [I] Influence overlay | [C] Choke overlay</div>
+  <div style="font-size:.62rem;color:#ffd;">Console: aiDecisionReport() | monsterAssignmentReport() | mapBalanceReport()</div>
 </div>
 
 <script>
@@ -530,7 +533,7 @@ function bfs(grid, sx,sy, tx,ty, W,H) {
   }
 
   // Overlay choke points: chỉ vẽ khi bật debug panel để tránh rối màn hình.
-  if (debugOn && CHOKE_CACHE.points.length) {
+  if (debugOn && CHOKE_CACHE.debugOverlay && CHOKE_CACHE.points.length) {
     ctx.save();
     const topN = Math.min(28, CHOKE_CACHE.points.length);
     for (let i = 0; i < topN; i++) {
@@ -1213,6 +1216,7 @@ const CHOKE_CACHE = {
   bridges:  [],      // [{x1,y1,x2,y2}]
   pointSet: new Set(),
   pointMap: new Map(),
+  debugOverlay: true,
   lastSeed: -1,
 };
 
@@ -4964,6 +4968,7 @@ window.addEventListener('keydown', e=>{
   if(e.key==='Tab'){ e.preventDefault(); toggleDebug(); return; }
   if(e.key==='g'||e.key==='G'){ toggleGraphColoring(); return; }
   if(e.key==='i'||e.key==='I'){ toggleInfluenceOverlay(); return; }
+  if(e.key==='c'||e.key==='C'){ toggleChokeOverlay(); return; }
   
   // Đặt bẫy
   if(e.key===' '||e.key==='Space'){ placeTrap(GS.myIdx); return; }
@@ -5066,6 +5071,95 @@ function mapQualityReport() {
   return full;
 }
 
+function aiDecisionReport() {
+  const cpu = GS.players.find(p => p.isBot);
+  const cd = GS.cpuDebug || {};
+  const mm = cd.minimax || { on:false, depth:0, action:'--', score:0 };
+  const t = cd.target || null;
+  const choke = cd.chokeTarget || null;
+  const util = cd.utility || {};
+  const utilEntries = Object.entries(util).map(([k,v]) => ({ action:k, utility:v ?? 0 }));
+  utilEntries.sort((a,b)=>(b.utility??0)-(a.utility??0));
+  const top3 = utilEntries.slice(0, 3);
+
+  const report = {
+    cpu: cpu ? { idx: cpu.idx, pos: { x: cpu.x, y: cpu.y }, hasTreasure: !!cpu.has } : null,
+    state: cd.state || '--',
+    tacticalTarget: t ? {
+      x: t.x, y: t.y,
+      distFromCpu: cpu ? Math.abs(cpu.x - t.x) + Math.abs(cpu.y - t.y) : null,
+      opportunity: +getCellOpportunity(t.x, t.y).toFixed(2),
+      danger: +getCellDanger(t.x, t.y).toFixed(2),
+    } : null,
+    cpuDanger: cpu ? +getCellDanger(cpu.x, cpu.y).toFixed(2) : null,
+    choke: {
+      count: CHOKE_CACHE.points.length,
+      current: choke ? { x: choke.x, y: choke.y, score: choke.score ?? null } : null,
+    },
+    minimax: {
+      enabled: !!mm.on,
+      depth: mm.depth || 0,
+      bestAction: mm.action || '--',
+      score: mm.score ?? 0,
+    },
+    utilityTop3: top3,
+    reason: cd.reason || '--',
+    monsterAssignment: GS.monsterAssignDebug ? {
+      summary: (GS.monsterAssignDebug.byMonster || []).slice(0, 8).map(r => `M${r.monster+1}->${r.kind}${r.playerIdx != null ? `(P${r.playerIdx+1})` : ''} c=${r.cost}`),
+      pressureByPlayer: GS.monsterAssignDebug.pressureByPlayer || {},
+    } : null,
+  };
+
+  console.log('╔══════════════════════════════════════════════════');
+  console.log('║ Maze Duel – AI Decision Report');
+  console.log('╚══════════════════════════════════════════════════');
+  console.table({
+    'CPU state': report.state,
+    'CPU danger': report.cpuDanger ?? '--',
+    'Target': report.tacticalTarget ? `(${report.tacticalTarget.x},${report.tacticalTarget.y})` : '--',
+    'Target opp': report.tacticalTarget?.opportunity ?? '--',
+    'Target danger': report.tacticalTarget?.danger ?? '--',
+    'Minimax ON': report.minimax.enabled,
+    'Minimax best': report.minimax.bestAction,
+    'Minimax score': report.minimax.score,
+    'Choke count': report.choke.count,
+    'Choke target': report.choke.current ? `(${report.choke.current.x},${report.choke.current.y})` : '--',
+  });
+  if (report.utilityTop3?.length) console.table(report.utilityTop3);
+  if (report.monsterAssignment) console.log('Monster pressure:', report.monsterAssignment.pressureByPlayer);
+  console.log('Reason:', report.reason);
+  return report;
+}
+
+function mapBalanceReport() {
+  const q = mapQualityReport();
+  if (!q) return null;
+  const mad = GS.monsterAssignDebug;
+  const pressure = mad?.pressureByPlayer || {};
+  const pVals = Object.values(pressure);
+  const pressureStd = pVals.length ? +stdDev(pVals).toFixed(2) : 0;
+
+  const summary = {
+    round: q.round,
+    gcStd: q.graphColoring?.stdDev ?? 0,
+    cspFairnessStd: q.fairness?.stdDev ?? 'N/A',
+    monsterMinSpread: q.placement?.monsterMinSpread ?? 0,
+    monsterPressureStd: pressureStd,
+    quizCells: q.placement?.quizCnt ?? 0,
+    chokeCount: CHOKE_CACHE.points.length,
+  };
+  console.log('[MapBalance] Summary');
+  console.table(summary);
+  return {
+    ...q,
+    tactical: {
+      chokeCount: CHOKE_CACHE.points.length,
+      monsterPressureByPlayer: pressure,
+      monsterPressureStd: pressureStd,
+    },
+  };
+}
+
 let debugOn=false;
 function toggleDebug(){
   debugOn=!debugOn;
@@ -5157,11 +5251,13 @@ function updateDebugPanel(){
   const cpu = GS.players.find(p=>p.isBot);
   const stateEl = document.getElementById('dbg-cpu-state');
   const targetEl = document.getElementById('dbg-cpu-target');
+  const tacticalEl = document.getElementById('dbg-cpu-tactical');
   const chokeStatsEl = document.getElementById('dbg-choke-stats');
   const chokeTopEl = document.getElementById('dbg-choke-top');
   const chokeCpuEl = document.getElementById('dbg-choke-cpu');
   const reasonEl = document.getElementById('dbg-cpu-reason');
   const mmEl = document.getElementById('dbg-cpu-minimax');
+  const mmActEl = document.getElementById('dbg-cpu-miniact');
   const utilEl = document.getElementById('dbg-cpu-utils');
   const monAssignEl = document.getElementById('dbg-mon-assign');
   const monPressureEl = document.getElementById('dbg-mon-pressure');
@@ -5169,6 +5265,13 @@ function updateDebugPanel(){
   if(targetEl) {
     const t = cd.target;
     targetEl.textContent = t ? `Target: (${t.x},${t.y}) | CPU: (${cpu?.x??'-'},${cpu?.y??'-'})` : 'Target: --';
+  }
+  if (tacticalEl) {
+    const t = cd.target;
+    const d = (cpu && t) ? (Math.abs(cpu.x - t.x) + Math.abs(cpu.y - t.y)) : null;
+    tacticalEl.textContent = t
+      ? `Tactical: focus=(${t.x},${t.y}) dist=${d ?? '--'} ${cd.chokeTarget ? '| choke-aware' : ''}`
+      : 'Tactical: --';
   }
   if (chokeStatsEl) chokeStatsEl.textContent = `Chokes: ${CHOKE_CACHE.points.length} | Bridges: ${CHOKE_CACHE.bridges.length}`;
   if (chokeTopEl) {
@@ -5198,6 +5301,10 @@ function updateDebugPanel(){
   if(mmEl) {
     const mm = cd.minimax || { on:false, depth:0, action:'--', score:0 };
     mmEl.textContent = `Minimax: ${mm.on ? 'ON' : 'OFF'} | d=${mm.depth||0} | a=${mm.action||'--'} | s=${mm.score ?? 0}`;
+  }
+  if (mmActEl) {
+    const mm = cd.minimax || { on:false, action:'--' };
+    mmActEl.textContent = `Minimax best action: ${mm.on ? (mm.action || '--') : '--'}`;
   }
   if(utilEl) {
     const u = cd.utility || {};
@@ -5230,6 +5337,10 @@ function toggleGraphColoring(){
 function toggleInfluenceOverlay(){
   INF_MAP.debugOverlay = !INF_MAP.debugOverlay;
   showHudMsg(INF_MAP.debugOverlay ? 'Influence overlay BẬT' : 'Influence overlay TẮT');
+}
+function toggleChokeOverlay(){
+  CHOKE_CACHE.debugOverlay = !CHOKE_CACHE.debugOverlay;
+  showHudMsg(CHOKE_CACHE.debugOverlay ? 'Choke overlay BẬT' : 'Choke overlay TẮT');
 }
 // Kích hoạt debug overlay – tái dùng gcResult đã tính trong initRound
 function buildGraphColoring(){
