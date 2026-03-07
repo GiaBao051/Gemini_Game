@@ -2439,6 +2439,170 @@ function chooseSafestNearbyCell(cpu, radius = 4) {
   return best;
 }
 
+function predictHolderRoute(holder, targetBase) {
+  if (!holder || !targetBase) return [];
+  const path = bfs(GS.grid, holder.x, holder.y, targetBase.x, targetBase.y, CFG.W, CFG.H);
+  if (!path || !path.length) return [];
+  const route = [];
+  let x = holder.x, y = holder.y;
+  for (let i = 0; i < path.length; i++) {
+    x += path[i].dx; y += path[i].dy;
+    route.push({ x, y });
+    if (route.length >= 16) break;
+  }
+  return route;
+}
+
+function evaluateTrapCell(cpu, x, y) {
+  const reasons = [];
+  if (x < 0 || x >= CFG.W || y < 0 || y >= CFG.H) return { score: -1e9, reasons:['out'] };
+  if (GS.grid[y * CFG.W + x] === CFG.T_WALL) return { score: -1e9, reasons:['wall'] };
+  if (GS.traps.some(t => t.x === x && t.y === y)) return { score: -1e9, reasons:['occupied'] };
+
+  const cpuBase = CFG.PLAYER_BASES[cpu.idx];
+  const dCpu = pathLenSafe(cpu.x, cpu.y, x, y);
+  if (dCpu >= 9999) return { score: -1e9, reasons:['unreachable'] };
+
+  let score = 0;
+
+  const choke = CHOKE_CACHE.points.find(cp => cp.x === x && cp.y === y);
+  if (choke) {
+    const s = Math.min(48, 10 + choke.rank * 0.18);
+    score += s; reasons.push(`choke+${s.toFixed(0)}`);
+  }
+
+  const holder = GS.treasureHolder >= 0 ? GS.players[GS.treasureHolder] : null;
+  const enemyHolder = holder && holder.idx !== cpu.idx ? holder : null;
+  if (enemyHolder) {
+    const hb = CFG.PLAYER_BASES[enemyHolder.idx];
+    const route = predictHolderRoute(enemyHolder, hb);
+    const ridx = route.findIndex(p => p.x === x && p.y === y);
+    if (ridx >= 0) {
+      const s = Math.max(14, 44 - ridx * 3);
+      score += s; reasons.push(`holderRoute+${s.toFixed(0)}`);
+    }
+  }
+
+  if (GS.treasure) {
+    const dTre = Math.abs(x - GS.treasure.x) + Math.abs(y - GS.treasure.y);
+    if (dTre <= 3) {
+      const s = 22 - dTre * 5;
+      score += s; reasons.push(`treasure+${s.toFixed(0)}`);
+    }
+  }
+
+  const dBase = Math.abs(x - cpuBase.x) + Math.abs(y - cpuBase.y);
+  if (enemyHolder && dBase >= 2 && dBase <= 5) {
+    const s = 20 - Math.abs(3 - dBase) * 4;
+    score += s; reasons.push(`defBase+${s.toFixed(0)}`);
+  }
+
+  if (CFG.PLAYER_BASES.some(b => Math.abs(x - b.x) + Math.abs(y - b.y) <= 1)) {
+    score -= 38; reasons.push('spawnTooNear-38');
+  }
+
+  let nearestTrap = 999;
+  for (const t of GS.traps) nearestTrap = Math.min(nearestTrap, Math.abs(t.x - x) + Math.abs(t.y - y));
+  if (nearestTrap <= 1) { score -= 36; reasons.push('trapCluster-36'); }
+  else if (nearestTrap <= 2) { score -= 14; reasons.push('trapNear-14'); }
+
+  const danger = getCellDanger(x, y);
+  if (danger > 0.1) {
+    const p = Math.min(30, danger * 2.2);
+    score -= p; reasons.push(`danger-${p.toFixed(0)}`);
+  }
+  if (nearestMonsterDist(x, y) <= 1) { score -= 26; reasons.push('monsterAdj-26'); }
+
+  const exits = countOpenNeighbors(x, y);
+  if (exits <= 1) { score -= 18; reasons.push('deadEnd-18'); }
+
+  if (dCpu > 8) {
+    const p = (dCpu - 8) * 2;
+    score -= p; reasons.push(`far-${p.toFixed(0)}`);
+  }
+
+  if (cpu.has) { score -= 30; reasons.push('carryTreasure-30'); }
+
+  return {
+    score: +score.toFixed(2),
+    reasons,
+    dist: dCpu,
+    chokeRank: choke ? choke.rank : 0,
+  };
+}
+
+function scoreTrapCell(cpu, x, y) {
+  return evaluateTrapCell(cpu, x, y).score;
+}
+
+function findBestTrapCell(cpu) {
+  if (!cpu) return null;
+  const radius = GS.cpuDiff === 'hard' ? 8 : 6;
+  const candidates = new Map();
+  const add = (x, y) => {
+    if (x < 0 || x >= CFG.W || y < 0 || y >= CFG.H) return;
+    if (GS.grid[y * CFG.W + x] === CFG.T_WALL) return;
+    candidates.set(`${x},${y}`, { x, y });
+  };
+
+  add(cpu.x, cpu.y);
+  for (let y = Math.max(1, cpu.y - radius); y <= Math.min(CFG.H - 2, cpu.y + radius); y++) {
+    for (let x = Math.max(1, cpu.x - radius); x <= Math.min(CFG.W - 2, cpu.x + radius); x++) add(x, y);
+  }
+
+  for (const cp of CHOKE_CACHE.points.slice(0, 14)) {
+    if (Math.abs(cp.x - cpu.x) + Math.abs(cp.y - cpu.y) <= radius + 2) add(cp.x, cp.y);
+  }
+
+  const holder = GS.treasureHolder >= 0 ? GS.players[GS.treasureHolder] : null;
+  const enemyHolder = holder && holder.idx !== cpu.idx ? holder : null;
+  if (enemyHolder) {
+    const hb = CFG.PLAYER_BASES[enemyHolder.idx];
+    const route = predictHolderRoute(enemyHolder, hb);
+    for (const p of route.slice(0, 10)) add(p.x, p.y);
+  }
+
+  if (GS.treasure) {
+    for (let y = GS.treasure.y - 2; y <= GS.treasure.y + 2; y++) {
+      for (let x = GS.treasure.x - 2; x <= GS.treasure.x + 2; x++) add(x, y);
+    }
+  }
+
+  let best = null;
+  for (const c of candidates.values()) {
+    const r = evaluateTrapCell(cpu, c.x, c.y);
+    if (!best || r.score > best.score) best = { x: c.x, y: c.y, score: r.score, reasons: r.reasons, dist: r.dist, chokeRank: r.chokeRank };
+  }
+  return best;
+}
+
+function shouldCpuPlaceTrap(cpu) {
+  if (!cpu || !cpu.isBot) return false;
+  if (GS.cpuDiff === 'easy') return false;
+  if (cpu.has) return false;
+  if (cpu.trapCount >= CFG.TRAP_LIMIT) return false;
+
+  const ai = cpu.ai || (cpu.ai = { state: CPU_STATES.SEEK_TREASURE, stateSince: Date.now(), recoverUntil: 0, lastX: cpu.x, lastY: cpu.y, blackboard: {} });
+  const bb = ai.blackboard || (ai.blackboard = {});
+  const now = Date.now();
+  const trapCd = GS.cpuDiff === 'hard' ? 2200 : 3600;
+  if ((ai.nextTrapAllowedAt || 0) > now) return false;
+
+  const best = bb.bestTrapCandidate || findBestTrapCell(cpu);
+  bb.bestTrapCandidate = best;
+  if (!best) return false;
+
+  const threshold = GS.cpuDiff === 'hard' ? 44 : 58;
+  const atBestCell = cpu.x === best.x && cpu.y === best.y;
+  if (!atBestCell) return false;
+  if (best.score < threshold) return false;
+  if (nearestMonsterDist(cpu.x, cpu.y) <= 1) return false;
+  if ((ai.lastTrapAt || 0) + trapCd > now) return false;
+  if (ai.lastTrapCell && Math.abs(ai.lastTrapCell.x - cpu.x) + Math.abs(ai.lastTrapCell.y - cpu.y) <= 1 && (now - ai.lastTrapAt) < 8000) return false;
+
+  return true;
+}
+
 function updateCpuBlackboard(cpu) {
   if (!cpu.ai) cpu.ai = { state: CPU_STATES.SEEK_TREASURE, stateSince: Date.now(), recoverUntil: 0, lastX: cpu.x, lastY: cpu.y, blackboard: {} };
   updateChokeCache();
@@ -2632,7 +2796,11 @@ function selectCpuTarget(cpu, state) {
       target = chooseSafestNearbyCell(cpu, state === CPU_STATES.RECOVER ? 5 : 4) || { x: base.x, y: base.y };
       break;
     case CPU_STATES.SET_TRAP:
-      target = bb.bestTrapPoint ? { x: bb.bestTrapPoint.x, y: bb.bestTrapPoint.y } : chooseSafestNearbyCell(cpu, 3);
+      {
+        const trapCell = findBestTrapCell(cpu);
+        bb.bestTrapCandidate = trapCell;
+        target = trapCell ? { x: trapCell.x, y: trapCell.y } : (bb.bestTrapPoint ? { x: bb.bestTrapPoint.x, y: bb.bestTrapPoint.y } : chooseSafestNearbyCell(cpu, 3));
+      }
       break;
   }
   GS.cpuDebug.target = target;
@@ -2935,11 +3103,27 @@ function executeCpuAction(cpu, state, target) {
   }
 
   if (state === CPU_STATES.SET_TRAP) {
-    const onBase = CFG.PLAYER_BASES.some(b => b.x === cpu.x && b.y === cpu.y);
-    const nearTarget = Math.abs(cpu.x - target.x) + Math.abs(cpu.y - target.y) <= 1;
-    if (!onBase && nearTarget && cpu.trapCount < CFG.TRAP_LIMIT) {
+    const ai = cpu.ai || (cpu.ai = { blackboard: {} });
+    const bb = ai.blackboard || (ai.blackboard = {});
+    const trapPlan = bb.bestTrapCandidate || findBestTrapCell(cpu);
+    if (trapPlan) {
+      bb.bestTrapCandidate = trapPlan;
+      target = { x: trapPlan.x, y: trapPlan.y };
+    }
+
+    if (shouldCpuPlaceTrap(cpu)) {
+      const before = cpu.trapCount;
       placeTrap(cpu.idx);
-      GS.cpuDebug.reason += ' | action: đặt bẫy';
+      const placed = cpu.trapCount > before;
+      if (placed) {
+        ai.lastTrapAt = Date.now();
+        ai.lastTrapCell = { x: cpu.x, y: cpu.y };
+        ai.nextTrapAllowedAt = ai.lastTrapAt + (GS.cpuDiff === 'hard' ? 2200 : 3600);
+        const t = bb.bestTrapCandidate || { x: cpu.x, y: cpu.y, score: scoreTrapCell(cpu, cpu.x, cpu.y), reasons:['liveScore'] };
+        GS.cpuDebug.reason += ` | trap:strategic (${t.x},${t.y}) s=${t.score}`;
+        GS.cpuDebug.reason += ` | why=[${(t.reasons || []).slice(0,4).join(', ')}]`;
+        return;
+      }
     }
   }
 
@@ -2959,9 +3143,21 @@ function executeCpuAction(cpu, state, target) {
 
     if (mm.action) {
       if (mm.action.type === 'place_trap') {
-        const before = cpu.trapCount;
-        placeTrap(cpu.idx);
-        const placed = cpu.trapCount > before;
+        const canStrategicTrap = shouldCpuPlaceTrap(cpu);
+        let placed = false;
+        if (canStrategicTrap) {
+          const before = cpu.trapCount;
+          placeTrap(cpu.idx);
+          placed = cpu.trapCount > before;
+          if (placed) {
+            const ai = cpu.ai || (cpu.ai = { blackboard: {} });
+            ai.lastTrapAt = Date.now();
+            ai.lastTrapCell = { x: cpu.x, y: cpu.y };
+            ai.nextTrapAllowedAt = ai.lastTrapAt + (GS.cpuDiff === 'hard' ? 2200 : 3600);
+            const t = ai.blackboard?.bestTrapCandidate;
+            if (t) GS.cpuDebug.reason += ` | trap:minimax (${t.x},${t.y}) s=${t.score}`;
+          }
+        }
         GS.cpuDebug.reason += ` | minimax=${mm.action.type}${placed?'':'(skip)'}`;
         if (placed) return;
       }
