@@ -372,7 +372,6 @@ const CFG = {
   MONSTER_MOVE_MS: 450,          // chu kỳ quái di chuyển
   TRAP_LIMIT: 3,                 // số bẫy tối đa mỗi người
   TRAP_TTL: 12000,               // thời gian sống của bẫy (ms)
-  STUN_MS: 2500,                 // thời gian bị stun
   ROUND_END_DELAY: 3500,         // ms chờ sau khi thắng ván
   BO3: 3,                        // số ván tối đa
   MQTT_URL: 'wss://broker.emqx.io:8084/mqtt',
@@ -558,9 +557,14 @@ function aStar(grid, sx,sy, tx,ty, W,H) {
 /* ================================================================
    WORLD GEN – sinh mê cung DFS
    ================================================================ */
-function generateMaze(W, H, seed) {
+function generateMaze(W, H, seed, round = 1) {
   const rng = mkRng(seed);
   const grid = new Uint8Array(W * H).fill(CFG.T_WALL);
+  const r = Math.max(1, Math.min(CFG.BO3, round | 0));
+  // Round càng cao: ít loop hơn + ít mở ngõ cụt hơn + tăng xác suất đắp tường.
+  const loopAddRatio = Math.max(0.03, CFG.LOOP_ADD_RATIO - (r - 1) * 0.03);
+  const deadEndPasses = Math.max(0, CFG.DEAD_END_PASSES - (r - 1));
+  const wallRestoreChance = Math.min(0.82, 0.55 + (r - 1) * 0.13);
   
   // Chỉ tạo ô tại vị trí lẻ (1,1), (1,3)... để tạo cấu trúc maze
   const carve = (x,y) => {
@@ -599,7 +603,7 @@ function generateMaze(W, H, seed) {
   // Thêm vòng lặp (loop) để giảm ngõ cụt
   const floorCells = [];
   for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++) if(grid[y*W+x]===CFG.T_WALL) floorCells.push({x,y});
-  const loopCount = Math.floor(floorCells.length * CFG.LOOP_ADD_RATIO);
+  const loopCount = Math.floor(floorCells.length * loopAddRatio);
   shuffle(floorCells, rng);
   let added=0;
   for(const {x,y} of floorCells){
@@ -610,14 +614,17 @@ function generateMaze(W, H, seed) {
   }
   
   // Giảm ngõ cụt
-  for(let pass=0;pass<CFG.DEAD_END_PASSES;pass++){
+  for(let pass=0;pass<deadEndPasses;pass++){
     for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){
       if(grid[y*W+x]!==CFG.T_FLOOR) continue;
       const fn=neighbors4(x,y,W,H).filter(n=>grid[n.y*W+n.x]===CFG.T_FLOOR);
       if(fn.length===1){
         // Mở ngẫu nhiên 1 tường xung quanh
         const walls=neighbors4(x,y,W,H).filter(n=>grid[n.y*W+n.x]===CFG.T_WALL && n.x>0&&n.x<W-1&&n.y>0&&n.y<H-1);
-        if(walls.length) grid[walls[Math.floor(rng()*walls.length)].y*W+walls[Math.floor(rng()*walls.length)|0].x]=CFG.T_FLOOR;
+        if(walls.length){
+          const w = walls[Math.floor(rng()*walls.length)];
+          grid[w.y*W+w.x] = CFG.T_FLOOR;
+        }
       }
     }
   }
@@ -629,8 +636,8 @@ function generateMaze(W, H, seed) {
       // Bỏ qua ô quá gần base (4 tile)
       const nearBase = CFG.PLAYER_BASES.some(b => Math.abs(b.x-x)+Math.abs(b.y-y) <= 3);
       if(nearBase) continue;
-      // 65% đặt tường để tạo cấu trúc maze thay vì hành lang trống
-      if(rng() < 0.65) {
+      // Round cao hơn tăng mật độ tường để mê cung khó hơn.
+      if(rng() < wallRestoreChance) {
         // Chỉ đặt tường nếu không tạo ngõ cụt hoàn toàn cho ô kề
         // (ô kề vẫn còn ít nhất 1 lối thoát)
         const canWall = neighbors4(x,y,W,H).every(nb => {
@@ -643,6 +650,72 @@ function generateMaze(W, H, seed) {
         if(canWall) grid[y*W+x] = CFG.T_WALL;
       }
     }
+  }
+
+  // Đảm bảo toàn bộ vùng đi được nằm trong 1 thành phần liên thông.
+  // Tránh trường hợp người chơi spawn vào vùng bị cô lập, không có đường đi.
+  const mainBase = CFG.PLAYER_BASES[0];
+  grid[mainBase.y * W + mainBase.x] = CFG.T_FLOOR;
+
+  function floodFrom(sx, sy) {
+    const vis = new Uint8Array(W * H);
+    const qx = [sx], qy = [sy];
+    vis[sy * W + sx] = 1;
+    for (let qi = 0; qi < qx.length; qi++) {
+      const x = qx[qi], y = qy[qi];
+      for (const n of neighbors4(x, y, W, H)) {
+        const ni = n.y * W + n.x;
+        if (vis[ni]) continue;
+        if (grid[ni] === CFG.T_WALL) continue;
+        vis[ni] = 1;
+        qx.push(n.x); qy.push(n.y);
+      }
+    }
+    return vis;
+  }
+
+  function carveCorridor(ax, ay, bx, by) {
+    let x = ax, y = ay;
+    grid[y * W + x] = CFG.T_FLOOR;
+    const horizontalFirst = rng() < 0.5;
+    while (x !== bx || y !== by) {
+      if ((horizontalFirst && x !== bx) || y === by) {
+        x += (bx > x ? 1 : -1);
+      } else {
+        y += (by > y ? 1 : -1);
+      }
+      if (x <= 0 || x >= W - 1 || y <= 0 || y >= H - 1) continue;
+      grid[y * W + x] = CFG.T_FLOOR;
+    }
+  }
+
+  let visited = floodFrom(mainBase.x, mainBase.y);
+  let safety = 0;
+  while (safety++ < 32) {
+    let orphan = -1;
+    for (let y = 1; y < H - 1 && orphan < 0; y++) {
+      for (let x = 1; x < W - 1; x++) {
+        const i = y * W + x;
+        if (grid[i] !== CFG.T_WALL && !visited[i]) {
+          orphan = i;
+          break;
+        }
+      }
+    }
+    if (orphan < 0) break;
+
+    const ox = orphan % W, oy = Math.floor(orphan / W);
+    let best = -1, bestD = 1e9;
+    for (let i = 0; i < W * H; i++) {
+      if (!visited[i]) continue;
+      const x = i % W, y = Math.floor(i / W);
+      const d = Math.abs(x - ox) + Math.abs(y - oy);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    if (best < 0) break;
+
+    carveCorridor(ox, oy, best % W, Math.floor(best / W));
+    visited = floodFrom(mainBase.x, mainBase.y);
   }
 
   // Quiz placement được xử lý sau bởi placeQuizGraphColoring() trong initRound
@@ -1235,6 +1308,7 @@ function isReachable(grid, from, to, W, H) {
 // numPlayers: 2-4 → ảnh hưởng số quái tối đa
 function getCspConstraints(round, numPlayers) {
   const r = Math.max(1, Math.min(3, round));
+  const monsterCount = 4 + (r - 1) * 2; // R1=4, R2=6, R3=8
   return {
     // Treasure: phải cách base ít nhất N tile Manhattan
     treasureMinDistBase: 8 + r * 2,       // R1:10  R2:12  R3:14
@@ -1250,8 +1324,8 @@ function getCspConstraints(round, numPlayers) {
     quizMinSpread: 5 - r,                 // R1:4   R2:3   R3:2
     // Quiz: phải cách base ít nhất N tile
     quizMinDistBase: 3,
-    // Số quái cố định 5 con mỗi ván
-    monsterCount: 5,
+    // Số quái tăng theo round
+    monsterCount,
     // Số quiz cell cố định 10 ô mỗi ván
     quizCount: 10,
     // Max bước thử mỗi biến trước khi fallback
@@ -1607,7 +1681,6 @@ function makePlayer(idx, name, isBot=false) {
     lerpT: 1,
     has: false,           // đang cầm kho báu?
     score: 0,             // số ván thắng
-    stunUntil: 0,
     cpuThinkingUntil: 0,  // đang "suy nghĩ" câu quiz (CPU bị đứng)
     alive: true,
     color: CFG.PLAYER_COLORS[idx],
@@ -1628,7 +1701,7 @@ function makeTrap(owner, x, y) {
    ================================================================ */
 function initRound(seed, playersData, keepScore=false) {
   GS.seed = seed || (Date.now() & 0xFFFFFF);
-  GS.grid = generateMaze(CFG.W, CFG.H, GS.seed);
+  GS.grid = generateMaze(CFG.W, CFG.H, GS.seed, GS.round);
   GS.treasureHolder = -1;
   GS.traps = [];
   GS.running = true;
@@ -1641,7 +1714,7 @@ function initRound(seed, playersData, keepScore=false) {
     const p=GS.players[i];
     const b=CFG.PLAYER_BASES[i];
     p.x=b.x; p.y=b.y; p.rx=b.x; p.ry=b.y; p.px=b.x; p.py=b.y; p.lerpT=1;
-    p.has=false; p.stunUntil=0; p.trapCount=0;
+    p.has=false; p.trapCount=0;
     if(!keepScore) p.score=0;
     if(playersData && playersData[i]) {
       p.name = playersData[i].name || p.name;
@@ -1787,7 +1860,7 @@ function getCpuMs() {
 function regenerateMap() {
   // Seed mới hoàn toàn ngẫu nhiên
   GS.seed = (Date.now() ^ (Math.random()*0xFFFFFF|0)) & 0xFFFFFF;
-  GS.grid = generateMaze(CFG.W, CFG.H, GS.seed);
+  GS.grid = generateMaze(CFG.W, CFG.H, GS.seed, GS.round);
 
   // Graph coloring trên map mới
   GS.gcResult = applyGraphColoring(GS.grid, CFG.W, CFG.H);
@@ -1842,7 +1915,6 @@ function tryMove(pidx, dx, dy) {
   if(GS.quizActive) return; // đang trả lời quiz, khóa di chuyển
   const p=GS.players[pidx];
   if(!p) return;
-  if(Date.now()<p.stunUntil){ showHudMsg('Bạn đang bị stun!'); return; }
   const nx=p.x+dx, ny=p.y+dy;
   if(nx<0||nx>=CFG.W||ny<0||ny>=CFG.H) return;
   const cell=GS.grid[ny*CFG.W+nx];
@@ -1871,7 +1943,6 @@ function resolveMove(pidx) {
   
   // Quiz cell
   if(cell===CFG.T_QUIZ && GS.mode==='offline') {
-    GS.grid[ny*CFG.W+nx]=CFG.T_FLOOR; // convert sau khi đi vào
     triggerQuiz(pidx);
   }
   
@@ -1934,7 +2005,6 @@ function checkStepOnTrap(pidx) {
     const t=GS.traps[i];
     if(t.owner===pidx) continue; // không dính bẫy mình
     if(t.x===p.x && t.y===p.y){
-      p.stunUntil=Date.now()+CFG.STUN_MS;
       if(p.has){
         // Thả kho báu tại vị trí dính bẫy
         GS.treasure={x:p.x, y:p.y};
@@ -1957,7 +2027,6 @@ function placeTrap(pidx) {
   if(!GS.running) return;
   const p=GS.players[pidx];
   if(!p||p.trapCount>=CFG.TRAP_LIMIT) return;
-  if(Date.now()<p.stunUntil) return;
   // Không đặt tại base
   const atBase=CFG.PLAYER_BASES.some(b=>b.x===p.x&&b.y===p.y);
   if(atBase) return;
@@ -2090,8 +2159,6 @@ function clearGameIntervals() {
    ================================================================ */
 // Hàm xử lý chung khi người chơi bị quái tấn công (dùng cả 2 chiều)
 function hitPlayerByMonster(p) {
-  if(Date.now() < p.stunUntil) return; // đang stun rồi, bỏ qua
-  p.stunUntil = Date.now() + CFG.STUN_MS;
   if(p.has) {
     GS.treasure = {x: p.x, y: p.y};
     p.has = false;
@@ -2107,6 +2174,45 @@ function hitPlayerByMonster(p) {
 }
 // Bán kính kích hoạt đuổi theo của quái vật (Manhattan distance)
 const MONSTER_CHASE_RADIUS = 7;
+
+// Path cho quái vật: chỉ cần ở trong biên map, bỏ qua tường/chướng ngại.
+function bfsMonsterPhasing(sx, sy, tx, ty, W, H) {
+  if (sx === tx && sy === ty) return [];
+  const N = W * H;
+  const vis = new Uint8Array(N);
+  const prev = new Int32Array(N).fill(-1);
+  const q = [];
+  const start = sy * W + sx;
+  const goal = ty * W + tx;
+  q.push(start);
+  vis[start] = 1;
+  const dx = [1, -1, 0, 0], dy = [0, 0, 1, -1];
+
+  for (let qi = 0; qi < q.length; qi++) {
+    const cur = q[qi];
+    if (cur === goal) break;
+    const cx = cur % W, cy = Math.floor(cur / W);
+    for (let d = 0; d < 4; d++) {
+      const nx = cx + dx[d], ny = cy + dy[d];
+      if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+      const ni = ny * W + nx;
+      if (vis[ni]) continue;
+      vis[ni] = 1;
+      prev[ni] = cur;
+      q.push(ni);
+    }
+  }
+
+  if (!vis[goal]) return null;
+  const path = [];
+  let node = goal;
+  while (node !== start) {
+    const p = prev[node];
+    path.unshift({ dx: node % W - p % W, dy: Math.floor(node / W) - Math.floor(p / W) });
+    node = p;
+  }
+  return path;
+}
 
 function moveMonsters() {
   if(!GS.running) return;
@@ -2148,7 +2254,7 @@ function moveMonsters() {
     if(chaseTarget){
       // ── CHẾ ĐỘ ĐUỔI: người chơi vào vùng phát hiện → BFS đuổi ──
       if(Math.random() < 0.9){
-        const path = bfs(GS.grid, m.x, m.y, chaseTarget.x, chaseTarget.y, CFG.W, CFG.H);
+        const path = bfsMonsterPhasing(m.x, m.y, chaseTarget.x, chaseTarget.y, CFG.W, CFG.H);
         if(path && path.length){ tx = m.x + path[0].dx; ty = m.y + path[0].dy; }
         else { const d = dirs[0]; tx = m.x + d[0]; ty = m.y + d[1]; }
       } else {
@@ -2164,7 +2270,7 @@ function moveMonsters() {
         m.patrolTarget = pickPatrolPoint(m, GS.grid, CFG.W, CFG.H);
       }
       if(m.patrolTarget && Math.random() < 0.6){
-        const path = bfs(GS.grid, m.x, m.y, m.patrolTarget.x, m.patrolTarget.y, CFG.W, CFG.H);
+        const path = bfsMonsterPhasing(m.x, m.y, m.patrolTarget.x, m.patrolTarget.y, CFG.W, CFG.H);
         if(path && path.length){ tx = m.x + path[0].dx; ty = m.y + path[0].dy; }
         else { m.patrolTarget = null; const d = dirs[0]; tx = m.x + d[0]; ty = m.y + d[1]; }
       } else {
@@ -2174,13 +2280,9 @@ function moveMonsters() {
     }
 
     // ── Áp dụng di chuyển ──
-    if(tx>=0&&tx<CFG.W&&ty>=0&&ty<CFG.H&&GS.grid[ty*CFG.W+tx]!==CFG.T_WALL){
+    if(tx>=0&&tx<CFG.W&&ty>=0&&ty<CFG.H){
       m.px = m.x; m.py = m.y; m.lerpT = 0;
       m.x = tx; m.y = ty;
-      // Quái đi qua ô quiz → phá hủy (không kích hoạt câu hỏi)
-      if(GS.grid[ty*CFG.W+tx] === CFG.T_QUIZ){
-        GS.grid[ty*CFG.W+tx] = CFG.T_FLOOR;
-      }
     }
 
     // ── Va chạm người chơi ──
@@ -2275,7 +2377,7 @@ function aStarMonsterAware(grid, monsters, sx, sy, tx, ty, W, H) {
 function cpuTick() {
   if(!GS.running) return;
   const cpu=GS.players.find(p=>p.isBot);
-  if(!cpu||Date.now()<cpu.stunUntil||Date.now()<cpu.cpuThinkingUntil) return;
+  if(!cpu||Date.now()<cpu.cpuThinkingUntil) return;
   
   let target=null;
   
@@ -2360,7 +2462,7 @@ function cpuTick() {
 // Di chuyển bất kỳ người chơi (nội bộ, không gửi mạng)
 function doMovePlayer(pidx, dx, dy) {
   const p=GS.players[pidx];
-  if(!p||Date.now()<p.stunUntil) return;
+  if(!p) return;
   const nx=p.x+dx, ny=p.y+dy;
   if(nx<0||nx>=CFG.W||ny<0||ny>=CFG.H||GS.grid[ny*CFG.W+nx]===CFG.T_WALL) return;
   p.px=p.x; p.py=p.y; p.lerpT=0;
@@ -2393,11 +2495,14 @@ function triggerQuiz(pidx) {
   document.getElementById('quiz-question').textContent=q.q;
   const opts=document.getElementById('quiz-opts');
   opts.innerHTML='';
+  let answered = false;
   q.opts.forEach((o,i)=>{
     const btn=document.createElement('div');
     btn.className='quiz-opt';
     btn.textContent=o;
     btn.onclick=()=>{
+      if(answered) return;
+      answered = true;
       // Vô hiệu hóa tất cả
       opts.querySelectorAll('.quiz-opt').forEach(b=>b.onclick=null);
       if(i===q.ans){
@@ -2406,7 +2511,7 @@ function triggerQuiz(pidx) {
       } else {
         btn.classList.add('wrong');
         opts.querySelectorAll('.quiz-opt')[q.ans].classList.add('correct');
-        setTimeout(()=>{ overlay.classList.remove('show'); GS.quizActive=false; handleQuizResult(pidx,false); },1000);
+        setTimeout(()=>{ handleQuizResult(pidx,false); triggerQuiz(pidx); },900);
       }
     };
     opts.appendChild(btn);
@@ -2417,10 +2522,13 @@ function triggerQuiz(pidx) {
 function handleQuizResult(pidx, correct) {
   const p=GS.players[pidx];
   if(correct){
-    showHudMsg('Trả lời đúng! Bạn không bị stun 👍');
+    // Chỉ xóa quiz cell sau khi người chơi trả lời đúng.
+    if(GS.grid && p && GS.grid[p.y*CFG.W+p.x]===CFG.T_QUIZ){
+      GS.grid[p.y*CFG.W+p.x]=CFG.T_FLOOR;
+    }
+    showHudMsg('Trả lời đúng! 👍');
   } else {
-    p.stunUntil=Date.now()+CFG.STUN_MS;
-    showHudMsg('Sai rồi! Bị stun 😵');
+    showHudMsg('Sai rồi! Bạn phải trả lời lại câu khác.');
   }
 }
 
@@ -2625,14 +2733,6 @@ function drawFrame() {
     const ry=lerp(p.py,p.y,p.lerpT)*T;
     const cx=rx+T/2, cy=ry+T/2;
     const r=T/2-1;
-    
-    // Stun effect
-    if(Date.now()<p.stunUntil){
-      ctx.fillStyle='#fff4';
-      ctx.beginPath();
-      ctx.arc(cx,cy,r+3,0,Math.PI*2);
-      ctx.fill();
-    }
     
     ctx.save();
     // Shadow glow
@@ -3091,7 +3191,7 @@ function broadcastState(ackSeq){
   mqttPublish({
     type:'UPDATE',
     ack: ackSeq||0,
-    players: GS.players.map(p=>({idx:p.idx,x:p.x,y:p.y,has:p.has,stunUntil:p.stunUntil,score:p.score})),
+    players: GS.players.map(p=>({idx:p.idx,x:p.x,y:p.y,has:p.has,score:p.score})),
     treasure: GS.treasure,
     treasureHolder: GS.treasureHolder,
     traps: GS.traps.map(t=>({owner:t.owner,x:t.x,y:t.y,createdAt:t.createdAt,ttl:t.ttl})),
@@ -3126,7 +3226,6 @@ function handleUpdate(msg){
         p.x=pd.x; p.y=pd.y;
       }
       p.has=pd.has;
-      p.stunUntil=pd.stunUntil||0;
       p.score=pd.score||p.score;
     }
   }
@@ -3189,7 +3288,7 @@ function handleRegenMap(msg){
   if(GS.isHost) return;
   if(!msg.seed) return;
   GS.seed = msg.seed;
-  GS.grid = generateMaze(CFG.W, CFG.H, GS.seed);
+  GS.grid = generateMaze(CFG.W, CFG.H, GS.seed, GS.round);
   GS.gcResult = applyGraphColoring(GS.grid, CFG.W, CFG.H);
   GS.graphColorMap = GS.gcResult.colorMap;
   const cspRng = mkRng(GS.seed ^ 0xDEAD);
