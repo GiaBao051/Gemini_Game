@@ -131,6 +131,20 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
 #hud-channel-fill { background:linear-gradient(90deg,#49b6ff,#60ffd3); }
 .mini-label { font-size:.68rem; color:#b8c9ef; min-width:58px; }
 
+/* --- Energy & Zone HUD --- */
+#hud-energy-wrap { display:flex; align-items:center; gap:5px; }
+.energy-bar { width:72px; height:7px; border-radius:4px; background:#101020; border:1px solid #3a3a6d; overflow:hidden; }
+.energy-fill { height:100%; width:100%; background:linear-gradient(90deg,#3fb0ff,#98f7ff); transition:width .12s linear; display:block; }
+#hud-zone { font-size:.7rem; padding:3px 8px; border-radius:6px; border:1px solid #3a3a6d; background:#171733; min-width:88px; text-align:center; white-space:nowrap; }
+#hud-zone.neutral { border-color:#555; color:#777; }
+#hud-zone.capturing { border-color:#f7d36a; color:#f7d36a; animation:pulse-zone .8s infinite; }
+#hud-zone.owned-me { border-color:#3fb0ff; color:#3fb0ff; }
+#hud-zone.owned-other { border-color:#f66; color:#f66; }
+@keyframes pulse-zone { 0%,100%{opacity:1} 50%{opacity:.65} }
+
+/* --- Touch act 3-col for Push --- */
+#touch-act.six { grid-template-columns:repeat(3,46px); }
+
 /* ===================== TOUCH CONTROLS ===================== */
 #touch-ctrl {
   display:none; position:absolute; bottom:10px; right:10px; left:10px; z-index:10;
@@ -141,7 +155,7 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
   pointer-events:auto;
 }
 #touch-act {
-  display:grid; grid-template-columns:repeat(2,46px); gap:6px;
+  display:grid; grid-template-columns:repeat(3,46px); gap:5px;
   pointer-events:auto;
 }
 #touch-ctrl button {
@@ -149,7 +163,7 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
   border:1px solid #ffffff44; border-radius:8px; color:#fff;
 }
 #touch-act button {
-  width:46px; height:36px; font-size:.68rem; font-weight:700;
+  width:46px; height:34px; font-size:.65rem; font-weight:700;
   background:#1d2a4dcc; border-color:#7fb2ff77;
 }
 #touch-ctrl button:hover { background:#ffffff44; }
@@ -203,7 +217,176 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
 /* ===================== SCROLLBAR ===================== */
 ::-webkit-scrollbar { width:4px; } ::-webkit-scrollbar-thumb { background:#2a2a5a; border-radius:2px; }
 
+/* ===================== HELP MODAL ===================== */
+#help-overlay {
+  display:none; position:fixed; inset:0; z-index:9000;
+  background:rgba(0,0,0,.78); backdrop-filter:blur(4px);
+  align-items:center; justify-content:center;
+}
+#help-overlay.show { display:flex; }
+#help-box {
+  background:#12122e; border:1px solid var(--border); border-radius:16px;
+  padding:24px 28px; width:min(640px,96vw); max-height:90vh; overflow-y:auto;
+  position:relative;
+}
+#help-box h2 { color:var(--accent); margin-bottom:14px; font-size:1.25rem; }
+#help-box h3 { color:#8ecfff; font-size:.9rem; margin:14px 0 6px; border-bottom:1px solid #2a2a5a; padding-bottom:4px; }
+.help-table { width:100%; border-collapse:collapse; font-size:.85rem; margin-bottom:4px; }
+.help-table td { padding:4px 8px; vertical-align:top; }
+.help-table td:first-child { color:var(--accent); white-space:nowrap; font-weight:600; width:110px; }
+.help-table tr:nth-child(even) td { background:#1a1a3a; }
+.help-close {
+  position:absolute; top:12px; right:14px;
+  background:none; border:none; font-size:1.4rem; color:var(--sub); cursor:pointer;
+  line-height:1; padding:2px 6px;
+}
+.help-close:hover { color:#fff; background:none; }
+.help-tag {
+  display:inline-block; padding:1px 7px; border-radius:10px;
+  font-size:.72rem; font-weight:700; margin-left:4px; vertical-align:middle;
+}
+.help-tag.energy { background:#1a4a8a; color:#98f7ff; }
+.help-tag.cd { background:#3a2a0a; color:#f0c040; }
+.help-tag.tip { background:#1a3a1a; color:#50c060; }
+#btn-help-float {
+  position:fixed; bottom:76px; right:10px; z-index:800;
+  width:36px; height:36px; border-radius:50%; padding:0;
+  font-size:1rem; background:#1e2a4a; border:1px solid #2a3a6a;
+  display:none; align-items:center; justify-content:center;
+}
+#btn-help-float.visible { display:flex; }
+
+/* ===================== LOBBY REDESIGN ===================== */
+#lobby-screen {
+  max-width:720px; padding:0; gap:0;
+  justify-content:center; min-height:100vh;
+  position:relative; overflow:hidden auto;
+}
+#lobby-screen > * { position:relative; z-index:1; width:100%; }
+
+/* Animated dot-grid background */
+#lobby-screen::before {
+  content:''; position:absolute; inset:0; z-index:0;
+  background-image:
+    radial-gradient(circle, rgba(32,80,192,.18) 1px, transparent 1px);
+  background-size:28px 28px;
+  animation:lobby-grid 18s linear infinite;
+}
+#lobby-screen::after {
+  content:''; position:absolute; inset:0; z-index:0; pointer-events:none;
+  background:
+    radial-gradient(ellipse 60% 40% at 50% 0%, rgba(240,192,64,.09) 0%, transparent 100%),
+    radial-gradient(ellipse 50% 50% at 15% 100%, rgba(32,80,192,.13) 0%, transparent 100%),
+    radial-gradient(ellipse 40% 40% at 85% 70%, rgba(48,160,80,.07) 0%, transparent 100%);
+}
+@keyframes lobby-grid { from{background-position:0 0} to{background-position:28px 28px} }
+
+/* Hero section */
+.lobby-hero { text-align:center; padding:36px 24px 20px; }
+.lobby-logo { display:inline-flex; align-items:center; gap:16px; margin-bottom:10px; }
+.lobby-castle { font-size:3.6rem; filter:drop-shadow(0 0 24px #f0c04055); animation:castle-bob 3s ease-in-out infinite; }
+@keyframes castle-bob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
+.lobby-title {
+  font-size:3.2rem; font-weight:900; letter-spacing:4px; line-height:1;
+  background:linear-gradient(135deg,#ffd86a 0%,#f0c040 40%,#d4920a 100%);
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+  background-clip:text;
+}
+.lobby-subtitle { font-size:.88rem; color:var(--sub); letter-spacing:1.5px; margin-top:6px; }
+.lobby-version { display:inline-block; margin-top:10px; font-size:.68rem; color:#444877; background:#12122a; border:1px solid #2a2a5a; border-radius:20px; padding:2px 10px; letter-spacing:.5px; }
+
+/* Feature badges */
+.lobby-features { display:flex; gap:7px; justify-content:center; flex-wrap:wrap; margin-top:16px; }
+.feat-badge {
+  display:flex; align-items:center; gap:5px;
+  padding:4px 12px; border-radius:20px; font-size:.7rem; font-weight:600;
+  background:rgba(255,255,255,.035); border:1px solid rgba(255,255,255,.09);
+  color:#7880a8; letter-spacing:.4px; user-select:none;
+  transition:border-color .2s,color .2s;
+}
+.feat-badge:hover { border-color:#4a4a90; color:var(--sub); }
+
+/* Lobby inner wrapper */
+.lobby-inner { padding:4px 22px 32px; display:flex; flex-direction:column; gap:14px; }
+
+/* Name input */
+.lobby-name-wrap {
+  display:flex; align-items:stretch;
+  background:#0e0e24; border:1px solid #2a2a5a; border-radius:12px;
+  overflow:hidden; transition:border-color .2s, box-shadow .2s;
+}
+.lobby-name-wrap:focus-within {
+  border-color:var(--accent); box-shadow:0 0 0 3px rgba(240,192,64,.1);
+}
+.lobby-name-icon {
+  padding:0 14px; font-size:1.1rem; color:#505078;
+  border-right:1px solid #1e1e42; display:flex; align-items:center; flex-shrink:0;
+  background:#0c0c22;
+}
+#inp-name { flex:1; background:transparent; border:none; padding:13px 16px; font-size:1rem; }
+#inp-name:focus { border-color:transparent; }
+
+/* Play mode cards */
+.lobby-cards { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.lobby-card {
+  background:#0e0e26; border:1px solid #24244a; border-radius:16px;
+  padding:22px 20px; display:flex; flex-direction:column; gap:10px;
+  transition:border-color .2s,transform .2s,box-shadow .2s; position:relative; overflow:hidden;
+}
+.lobby-card-glow {
+  position:absolute; top:0; left:0; right:0; height:2px;
+  opacity:0; transition:opacity .25s;
+}
+.offline .lobby-card-glow { background:linear-gradient(90deg,transparent,#30a050,transparent); }
+.online  .lobby-card-glow { background:linear-gradient(90deg,transparent,#3d80ff,transparent); }
+.lobby-card:hover { transform:translateY(-3px); box-shadow:0 12px 36px rgba(0,0,0,.5); }
+.lobby-card:hover .lobby-card-glow { opacity:1; }
+.offline:hover { border-color:#2a6040; }
+.online:hover  { border-color:#2a3a80; }
+
+.lcard-header { display:flex; align-items:center; gap:10px; }
+.lcard-icon { font-size:1.9rem; line-height:1; filter:drop-shadow(0 0 8px currentColor); }
+.lcard-title { font-size:1.05rem; font-weight:700; color:var(--text); }
+.lcard-badge {
+  font-size:.65rem; font-weight:700; padding:2px 8px; border-radius:20px;
+  margin-left:auto; flex-shrink:0;
+}
+.lcard-badge.offline-b { background:#1a3a22; color:#4ac070; border:1px solid #2a6040; }
+.lcard-badge.online-b  { background:#1a2448; color:#6090ff; border:1px solid #2a3a80; }
+.lcard-desc { font-size:.78rem; color:#7880a8; line-height:1.6; }
+.lcard-sep { height:1px; background:#1e1e3a; margin:2px 0; }
+
+/* Online extras */
+.online-status-row { display:flex; align-items:center; justify-content:space-between; }
+.online-room-row { display:flex; gap:8px; align-items:center; }
+#inp-room {
+  flex:1; text-transform:uppercase; letter-spacing:5px;
+  text-align:center; font-size:1.1rem; font-weight:700;
+}
+.lobby-divider {
+  display:flex; align-items:center; gap:8px;
+  color:#404060; font-size:.72rem;
+}
+.lobby-divider::before,.lobby-divider::after { content:''; flex:1; height:1px; background:#1e1e3a; }
+.lcard-action button { width:100%; justify-content:center; }
+
+/* Bottom row */
+.lobby-footer {
+  display:flex; align-items:center; justify-content:center; gap:10px;
+  padding-top:2px;
+}
+.lobby-footer button {
+  background:transparent; border:1px solid #24244a; color:#6070a0;
+  font-size:.8rem; padding:7px 18px;
+}
+.lobby-footer button:hover { border-color:#4a4a90; color:var(--text); background:rgba(255,255,255,.03); }
+
 /* ===================== RESPONSIVE ===================== */
+@media(max-width:540px) {
+  .lobby-cards { grid-template-columns:1fr; }
+  .lobby-title { font-size:2.4rem; }
+  .lobby-castle { font-size:2.8rem; }
+}
 @media(max-width:480px) {
   h1 { font-size:1.5rem; } button.big { padding:10px 20px; font-size:1rem; }
   #hud { padding:4px 8px; gap:8px; } .hud-item { font-size:.75rem; }
@@ -219,34 +402,82 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
      LOBBY SCREEN
      ============================================================ -->
 <div id="lobby-screen" class="screen active">
-  <h1>🏰 Maze Duel</h1>
-  <h3>BO3 Match — Chinh phục mê cung</h3>
 
-  <div class="panel">
-    <div class="row">
-      <label>Tên của bạn:</label>
-      <input id="inp-name" type="text" class="wide" maxlength="16" placeholder="Nhập tên (1-16 ký tự)" value="Player1">
+  <!-- ── Hero ── -->
+  <div class="lobby-hero">
+    <div class="lobby-logo">
+      <span class="lobby-castle">🏰</span>
+      <span class="lobby-title">MAZE DUEL</span>
+    </div>
+    <div class="lobby-subtitle">BO3 Match · Chinh phục mê cung · Thuật toán AI</div>
+    <span class="lobby-version">v3.0 · Energy + Zone Control</span>
+    <div class="lobby-features">
+      <span class="feat-badge">⚡ Energy System</span>
+      <span class="feat-badge">🏰 Zone Control</span>
+      <span class="feat-badge">🤖 FSM + Utility AI</span>
+      <span class="feat-badge">🗺️ A* / Dijkstra</span>
+      <span class="feat-badge">♟️ Minimax · CSP</span>
+      <span class="feat-badge">🌡️ Influence Map</span>
     </div>
   </div>
 
-  <div class="panel">
-    <h2>🤖 Chơi với máy (Offline)</h2>
-    <div class="row" style="margin-top:10px;">
-      <button class="big success" onclick="startOfflineFlow()">▶ Bắt đầu</button>
-    </div>
-  </div>
+  <!-- ── Inner content ── -->
+  <div class="lobby-inner">
 
-  <div class="panel">
-    <div class="row" style="justify-content:space-between; margin-bottom:10px;">
-      <h2>🌐 Chơi Online</h2>
-      <span id="mqtt-status" class="conn">⚡ Đang kết nối...</span>
+    <!-- Name input -->
+    <div class="lobby-name-wrap">
+      <div class="lobby-name-icon">👤</div>
+      <input id="inp-name" type="text" maxlength="16" placeholder="Nhập tên của bạn..." value="Player1">
     </div>
-    <div class="row" style="margin-bottom:10px;">
-      <button onclick="createRoom()">🏠 Tạo phòng</button>
-      <span style="color:var(--sub)">hoặc</span>
-      <input id="inp-room" type="text" class="short" maxlength="4" placeholder="Mã phòng" style="text-transform:uppercase">
-      <button onclick="joinRoom()">🚪 Vào phòng</button>
+
+    <!-- Play mode cards -->
+    <div class="lobby-cards">
+
+      <!-- Offline -->
+      <div class="lobby-card offline">
+        <div class="lobby-card-glow"></div>
+        <div class="lcard-header">
+          <span class="lcard-icon">🤖</span>
+          <span class="lcard-title">Chơi với máy</span>
+          <span class="lcard-badge offline-b">OFFLINE</span>
+        </div>
+        <div class="lcard-desc">Đối đầu AI với 3 cấp độ khó. Không cần kết nối mạng, bắt đầu ngay lập tức.</div>
+        <div class="lcard-sep"></div>
+        <div class="lcard-action">
+          <button class="big success" onclick="startOfflineFlow()">▶ Bắt đầu ngay</button>
+        </div>
+      </div>
+
+      <!-- Online -->
+      <div class="lobby-card online">
+        <div class="lobby-card-glow"></div>
+        <div class="lcard-header">
+          <span class="lcard-icon">🌐</span>
+          <span class="lcard-title">Chơi Online</span>
+          <span class="lcard-badge online-b">ONLINE</span>
+        </div>
+        <div class="online-status-row">
+          <div class="lcard-desc" style="margin:0">Chơi cùng bạn bè qua mạng, tối đa 4 người.</div>
+          <span id="mqtt-status" class="conn" style="flex-shrink:0;margin-left:8px;">⚡ Đang kết nối...</span>
+        </div>
+        <div class="lcard-sep"></div>
+        <div class="lcard-action">
+          <button onclick="createRoom()" style="margin-bottom:8px;">🏠 Tạo phòng mới</button>
+        </div>
+        <div class="lobby-divider">hoặc nhập mã phòng</div>
+        <div class="online-room-row">
+          <input id="inp-room" type="text" class="wide" maxlength="4" placeholder="XXXX">
+          <button onclick="joinRoom()">🚪 Vào</button>
+        </div>
+      </div>
+
     </div>
+
+    <!-- Footer -->
+    <div class="lobby-footer">
+      <button onclick="toggleHelp()">❓ Hướng dẫn chơi</button>
+    </div>
+
   </div>
 </div>
 
@@ -331,8 +562,10 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
         <button ontouchstart="touchAction('dash')" onmousedown="touchAction('dash')">Dash</button>
         <button ontouchstart="touchAction('shock')" onmousedown="touchAction('shock')">Shock</button>
         <button ontouchstart="touchAction('shield')" onmousedown="touchAction('shield')">Shield</button>
+        <button ontouchstart="touchAction('push')" onmousedown="touchAction('push')">Push</button>
+        <button ontouchstart="touchAction('lasso')" onmousedown="touchAction('lasso')">Lasso</button>
         <button ontouchstart="touchAction('trap')" onmousedown="touchAction('trap')">Trap</button>
-        <button style="grid-column:1 / span 2" ontouchstart="touchAction('interact')" onmousedown="touchAction('interact')">Interact</button>
+        <button ontouchstart="touchAction('interact')" onmousedown="touchAction('interact')">Interact</button>
       </div>
     </div>
   </div>
@@ -345,7 +578,15 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
       <div class="skill-chip" id="skill-dash">Dash<br><b>Ready</b></div>
       <div class="skill-chip" id="skill-shock">Shock<br><b>Ready</b></div>
       <div class="skill-chip" id="skill-shield">Shield<br><b>Ready</b></div>
+      <div class="skill-chip" id="skill-push">Push<br><b>Ready</b></div>
+      <div class="skill-chip" id="skill-lasso">Lasso<br><b>Ready</b></div>
       <div id="hud-states">State: --</div>
+      <div id="hud-energy-wrap">
+        <span class="mini-label">⚡EN</span>
+        <div class="energy-bar"><span class="energy-fill" id="hud-energy-fill"></span></div>
+        <span id="hud-energy-val" style="font-size:.7rem;color:#98f7ff;min-width:26px;">100</span>
+      </div>
+      <div id="hud-zone" class="neutral">Zone: --</div>
       <div id="hud-objective">
         <span class="mini-label">Contest</span>
         <div class="mini-bar"><span id="hud-contest-fill"></span></div>
@@ -395,6 +636,89 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
 <div id="hud-msg"></div>
 
 <!-- ============================================================
+     HELP MODAL
+     ============================================================ -->
+<div id="help-overlay">
+  <div id="help-box">
+    <button class="help-close" onclick="toggleHelp()" title="Đóng">✕</button>
+    <h2>📖 Hướng dẫn chơi — Maze Duel</h2>
+
+    <h3>🎯 Mục tiêu</h3>
+    <p style="font-size:.85rem;color:#ccc;line-height:1.6">
+      Tìm kho báu vàng <strong style="color:#f0c040">★</strong> trên bản đồ, nhặt lên và mang về <strong>góc base</strong> của mình để ghi điểm.
+      Mỗi lần ghi điểm phải <em>đứng tại base &amp; giữ nguyên 1.5 giây</em> (Channel).
+      Thắng <strong>2/3 ván</strong> (Best of 3) để chiến thắng chung cuộc.
+    </p>
+
+    <h3>⌨️ Điều khiển bàn phím</h3>
+    <table class="help-table">
+      <tr><td>W A S D</td><td>Di chuyển lên / trái / xuống / phải</td></tr>
+      <tr><td>↑ ↓ ← →</td><td>Di chuyển (Arrow keys)</td></tr>
+      <tr><td>Shift</td><td>⚡ Dash — lướt nhanh 2 ô <span class="help-tag energy">25⚡</span> <span class="help-tag cd">CD 4s</span></td></tr>
+      <tr><td>Q</td><td>⚡ Shock — chớp giật stunne kẻ địch xung quanh <span class="help-tag energy">30⚡</span> <span class="help-tag cd">CD 5s</span></td></tr>
+      <tr><td>E</td><td>🛡 Shield — giáp miễn nhiễm bị cướp kho báu <span class="help-tag energy">20⚡</span> <span class="help-tag cd">CD 6s</span></td></tr>
+      <tr><td>R</td><td>💥 Push — đẩy kẻ địch kề sát; đẩy vào tường → choáng <span class="help-tag energy">30⚡</span> <span class="help-tag cd">CD 7s</span></td></tr>
+      <tr><td>T</td><td>🪢 Lasso — quăng dây 4 ô theo hướng di chuyển: trúng kho báu dưới đất → nhặt ngay; trúng người cầm → cướp tức thì; trúng địch thường → kéo 1 ô về phía bạn <span class="help-tag energy">35⚡</span> <span class="help-tag cd">CD 9s</span></td></tr>
+      <tr><td>F</td><td>🤝 Interact — tranh chấp / nhặt kho báu</td></tr>
+      <tr><td>Space</td><td>🪤 Đặt bẫy — làm chậm kẻ địch đi qua</td></tr>
+      <tr><td>H hoặc ?</td><td>Mở / đóng bảng hướng dẫn này</td></tr>
+      <tr><td>Tab</td><td>Bật / tắt Debug panel (thuật toán AI)</td></tr>
+    </table>
+
+    <h3>⚡ Hệ thống Energy (Năng lượng)</h3>
+    <p style="font-size:.85rem;color:#ccc;line-height:1.6">
+      Mỗi skill tốn năng lượng (Energy 0–100). Năng lượng tự hồi phục ~12.5⚡/giây.
+      Khi Energy không đủ, skill không thể dùng dù hết cooldown.
+      Kiểm soát <strong>Zone ⚡</strong> ở trung tâm bản đồ giúp hồi energy <strong>nhanh gấp đôi</strong>.
+    </p>
+
+    <h3>🏰 Zone Control (Vùng kiểm soát)</h3>
+    <table class="help-table">
+      <tr><td>Vị trí</td><td>Trung tâm bản đồ, ký hiệu <strong style="color:#f0c040">⚡</strong></td></tr>
+      <tr><td>Chiếm vùng</td><td>Đứng trong zone <strong>2 giây</strong> liên tục (không bị cản)</td></tr>
+      <tr><td>Tranh chấp</td><td>Cả hai đều trong zone → đồng hồ tạm dừng</td></tr>
+      <tr><td>Phần thưởng</td><td>Chủ sở hữu nhận Energy hồi <strong>×2</strong></td></tr>
+      <tr><td>Mất zone</td><td>Đối thủ đứng trong zone &amp; bạn không vào → zone bị chiếm lại</td></tr>
+    </table>
+
+    <h3>⚔️ Cơ chế đối kháng PvP</h3>
+    <table class="help-table">
+      <tr><td>Contest</td><td>Đứng kề sát người cầm kho báu → tranh chấp 2 giây → nếu thành công thì cướp kho</td></tr>
+      <tr><td>Channel</td><td>Cầm kho báu + đứng tại base → giữ 1.5 giây → ghi điểm (bị ngắt nếu enemy kề sát)</td></tr>
+      <tr><td>Shock (Q)</td><td>Choáng enemy kề sát ~1 giây → dừng di chuyển &amp; ngắt contest/channel của họ</td></tr>
+      <tr><td>Push (R)</td><td>Đẩy enemy ra xa 2 ô; nếu chạm tường → <strong>wall-stun</strong> ~0.5 giây</td></tr>
+      <tr><td>Shield (E)</td><td>Trong thời gian shield, enemy không thể Contest cướp kho báu của bạn</td></tr>
+      <tr><td>Dash (Shift)</td><td>Lướt nhanh theo hướng đang di chuyển — cả tấn công lẫn tẩu thoát</td></tr>
+    </table>
+
+    <h3>👾 Quái vật &amp; Bẫy</h3>
+    <table class="help-table">
+      <tr><td>Quái (M)</td><td>Di chuyển ngẫu nhiên; chạm vào → choáng ngắn. Đã giảm tốc (ít nguy hiểm hơn).</td></tr>
+      <tr><td>Bẫy (Space)</td><td>Đặt bẫy trên sàn; kẻ địch đi qua → bị làm chậm. Mỗi người tối đa 2 bẫy.</td></tr>
+      <tr><td>❓ Quiz cell</td><td>Đi qua ô quiz → trả lời câu hỏi; đúng = tăng tốc, sai = bị slow.</td></tr>
+    </table>
+
+    <h3>💡 Mẹo chiến thuật</h3>
+    <ul style="font-size:.83rem;color:#ccc;line-height:1.8;padding-left:16px;">
+      <li>Dùng <strong>Push</strong> khi kẻ địch đứng gần tường để gây wall-stun — cơ hội tranh chấp miễn phí.</li>
+      <li>Giữ <strong>Shield</strong> khi sắp về base để tránh bị cướp kho báu ở chặng cuối.</li>
+      <li>Kiểm soát <strong>Zone</strong> khi energy thấp — hồi nhanh gấp đôi giúp dùng skill liên tục.</li>
+      <li><strong>Bait</strong> enemy dùng skill trước, sau đó mới vào contest khi họ hết cooldown.</li>
+      <li>Đặt bẫy tại các <em>choke point</em> hẹp để cản đường enemy hiệu quả nhất.</li>
+    </ul>
+
+    <div style="text-align:center;margin-top:18px;">
+      <button onclick="toggleHelp()" class="big">✅ Đã hiểu, bắt đầu chơi!</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     HELP FLOAT BUTTON
+     ============================================================ -->
+<button id="btn-help-float" title="Hướng dẫn (H)" onclick="toggleHelp()">❓</button>
+
+<!-- ============================================================
      DEBUG PANEL
      ============================================================ -->
 <div id="debug-panel">
@@ -439,6 +763,10 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
   <div id="dbg-choke-cpu" style="font-size:.65rem;color:#8ef;">CPU choke target: --</div>
   <div id="dbg-cpu-reason" style="font-size:.65rem;color:#cef;">Reason: --</div>
   <div id="dbg-cpu-skill-reason" style="font-size:.63rem;color:#bfe;">Skill reason: --</div>
+  <div style="margin-top:6px;border-top:1px solid #6ee4;padding-top:6px;color:#6ee;">⚡ ENERGY &amp; ZONE</div>
+  <div id="dbg-energy" style="font-size:.65rem;color:#9ef;">Energy: --</div>
+  <div id="dbg-push-cd" style="font-size:.65rem;color:#ef9;">Push CD: --</div>
+  <div id="dbg-zone" style="font-size:.65rem;color:#6ee;">Zone: --</div>
   <div id="dbg-cpu-minimax" style="font-size:.65rem;color:#9fe;">Minimax: --</div>
   <div id="dbg-cpu-miniact" style="font-size:.65rem;color:#8fd;">Minimax best action: --</div>
   <div id="dbg-cpu-utils" style="max-height:90px;overflow-y:auto;font-size:.63rem;color:#bdf;">Utility: --</div>
@@ -459,7 +787,7 @@ const CFG = {
   W: 41, H: 25, TILE: 16,       // kích thước mê cung & ô
   T_FLOOR: 0, T_WALL: 1, T_QUIZ: 2,
   MAX_PLAYERS: 4,
-  MONSTER_MOVE_MS: 450,          // chu kỳ quái di chuyển
+  MONSTER_MOVE_MS: 600,          // chu kỳ quái di chuyển (giảm vai trò quái)
   PLAYER_GRACE_ROUND_START_MS: 2200,
   PLAYER_GRACE_MONSTER_HIT_MS: 1800,
   PLAYER_GRACE_REGEN_MS: 1300,
@@ -473,11 +801,29 @@ const CFG = {
   SLOW_DURATION_MS: 1000,
   DASH_DISTANCE: 2,
   DASH_COOLDOWN_MS: 6000,
+  DASH_ENERGY: 25,               // energy cost for Dash
   SHOCK_RANGE_MANHATTAN: 1,
   SHOCK_STUN_MS: 800,
   SHOCK_COOLDOWN_MS: 8000,
+  SHOCK_ENERGY: 30,              // energy cost for Shock
   SHIELD_DURATION_MS: 1200,
   SHIELD_COOLDOWN_MS: 10000,
+  SHIELD_ENERGY: 20,             // energy cost for Shield
+  PUSH_DISTANCE: 2,              // cells pushed per use
+  PUSH_COOLDOWN_MS: 7000,
+  PUSH_ENERGY: 30,               // energy cost for Push
+  PUSH_WALL_STUN_MS: 500,        // stun if pushed into wall
+  LASSO_DISTANCE: 4,              // rope reach in tiles (cells in facing direction)
+  LASSO_COOLDOWN_MS: 9000,        // lasso cooldown ms
+  LASSO_ENERGY: 35,               // energy cost for Lasso
+  ENERGY_MAX: 100,
+  ENERGY_REGEN_PER_TICK: 1,      // energy per regen tick
+  ENERGY_REGEN_INTERVAL_MS: 80,  // regen interval → ~12.5/s at full speed
+  ENERGY_ZONE_BONUS_MULT: 2,     // 2× regen when you own the zone
+  ZONE_CENTER_X: 20,
+  ZONE_CENTER_Y: 12,
+  ZONE_RADIUS: 2,                // manhattan radius of the zone
+  ZONE_CAPTURE_MS: 2000,         // time to capture uncontested
   CONTEST_TIME_MS: 700,
   CONTEST_FAIL_COOLDOWN_MS: 2000,
   GOAL_CHANNEL_MS: 1000,
@@ -629,6 +975,9 @@ function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   const el = document.getElementById(id);
   if(el) el.classList.add('active');
+  // Nút ? nổi chỉ hiện khi đang ở game-screen
+  const helpBtn = document.getElementById('btn-help-float');
+  if (helpBtn) helpBtn.classList.toggle('visible', id === 'game-screen');
 }
 // Lấy tên người chơi đã sanitize
 function getPlayerName() {
@@ -3088,6 +3437,8 @@ const GS = {
   netLastAppliedRegenVersion: 0,
   contest: null, // {active, actorIdx, holderIdx, startAt, endAt}
   goalChannel: null, // {active, playerIdx, startAt, endAt}
+  zone: null,    // zone control state {capturedBy, capturingBy, captureStart, captureEnd, cells}
+  vfx: [],       // visual effects pool [{type, x, y, spawnAt, life, ...opts}]
   monsterAssignDebug: null,
   optimizerDebug: null,
   cpuDebug: {           // debug dữ liệu FSM + Utility AI của CPU
@@ -3125,6 +3476,8 @@ function makePlayer(idx, name, isBot=false, clientId='') {
     shockCdUntil: 0,
     shieldCdUntil: 0,
     contestCdUntil: 0,
+    pushCdUntil: 0,
+    energy: CFG.ENERGY_MAX,
     moveNextAt: 0,
     lastMoveDir: { dx: 0, dy: -1 },
     inputSeq: 0,          // cho online reconcile
@@ -3165,15 +3518,39 @@ function getMoveDelayMultiplier(player, now = Date.now()) {
 }
 
 function canUseDash(player, now = Date.now()) {
-  return !!player && !isStunned(player, now) && now >= (player.dashCdUntil || 0);
+  return !!player && !isStunned(player, now) && now >= (player.dashCdUntil || 0)
+    && (player.energy ?? CFG.ENERGY_MAX) >= CFG.DASH_ENERGY;
 }
 
 function canUseShock(player, now = Date.now()) {
-  return !!player && !isStunned(player, now) && now >= (player.shockCdUntil || 0);
+  return !!player && !isStunned(player, now) && now >= (player.shockCdUntil || 0)
+    && (player.energy ?? CFG.ENERGY_MAX) >= CFG.SHOCK_ENERGY;
 }
 
 function canUseShield(player, now = Date.now()) {
-  return !!player && !isStunned(player, now) && now >= (player.shieldCdUntil || 0);
+  return !!player && !isStunned(player, now) && now >= (player.shieldCdUntil || 0)
+    && (player.energy ?? CFG.ENERGY_MAX) >= CFG.SHIELD_ENERGY;
+}
+
+function canUsePush(player, now = Date.now()) {
+  return !!player && !isStunned(player, now) && now >= (player.pushCdUntil || 0)
+    && (player.energy ?? CFG.ENERGY_MAX) >= CFG.PUSH_ENERGY;
+}
+
+function canUseLasso(player, now = Date.now()) {
+  // Cannot use while already holding the treasure
+  return !!player && !player.has && !isStunned(player, now)
+    && now >= (player.lassoCdUntil || 0)
+    && (player.energy ?? CFG.ENERGY_MAX) >= CFG.LASSO_ENERGY;
+}
+
+function drainEnergy(player, amount) {
+  if (!player) return;
+  player.energy = Math.max(0, (player.energy ?? CFG.ENERGY_MAX) - amount);
+}
+
+function hasEnoughEnergy(player, amount) {
+  return !!player && (player.energy ?? CFG.ENERGY_MAX) >= amount;
 }
 
 function manhattan(a, b) {
@@ -3392,6 +3769,7 @@ function initRound(seed, playersData, keepScore=false) {
   GS.seed = seed || (Date.now() & 0xFFFFFF);
   GS.treasureHolder = -1;
   GS.traps = [];
+  GS.vfx = [];
   GS.running = true;
   const now = Date.now();
   GS.roundStartTime = now;
@@ -3399,6 +3777,7 @@ function initRound(seed, playersData, keepScore=false) {
   GS.cspLog = [];
   GS.contest = null;
   GS.goalChannel = null;
+  initZone();
 
   // Đặt lại vị trí và trạng thái người chơi (giữ score)
   for(let i=0;i<GS.players.length;i++){
@@ -3408,7 +3787,8 @@ function initRound(seed, playersData, keepScore=false) {
     p.has=false; p.trapCount=0; p.graceUntil=0;
     p.stunnedUntil=0; p.shieldUntil=0; p.slowUntil=0;
     p.dashCdUntil=0; p.shockCdUntil=0; p.shieldCdUntil=0;
-    p.contestCdUntil=0; p.moveNextAt=0; p.lastMoveDir={dx:0,dy:-1};
+    p.contestCdUntil=0; p.pushCdUntil=0;
+    p.energy=CFG.ENERGY_MAX; p.moveNextAt=0; p.lastMoveDir={dx:0,dy:-1};
     setPlayerGrace(p, CFG.PLAYER_GRACE_ROUND_START_MS, now);
     if(!keepScore) p.score=0;
     if(playersData && playersData[i]) {
@@ -3528,9 +3908,14 @@ function beginGameplay() {
   if(GS._monsterInterval) clearInterval(GS._monsterInterval);
   if(GS._cpuInterval) clearInterval(GS._cpuInterval);
   if(GS._trapInterval) clearInterval(GS._trapInterval);
+  if(GS._monsterInterval) clearInterval(GS._monsterInterval);
+  if(GS._cpuInterval) clearInterval(GS._cpuInterval);
+  if(GS._trapInterval) clearInterval(GS._trapInterval);
+  if(GS._energyInterval) clearInterval(GS._energyInterval);
   GS._monsterInterval = setInterval(moveMonsters, CFG.MONSTER_MOVE_MS);
   GS._cpuInterval = setInterval(cpuTick, getCpuMs());
   GS._trapInterval = setInterval(checkTraps, 500);
+  GS._energyInterval = setInterval(energyRegenTick, CFG.ENERGY_REGEN_INTERVAL_MS);
   startRenderLoop();
   updateHUD();
   
@@ -3800,6 +4185,123 @@ function dropTreasureAtHolder(holder, reason = 'drop') {
   return true;
 }
 
+/* ================================================================
+   ZONE CONTROL – Control Zone ở trung tâm bản đồ.
+   Thuật toán: FSM 3 trạng thái (Neutral / Capturing / Captured).
+   Influence map tính bonus energy cho chủ sở hữu zone.
+   Mục tiêu: tạo objective trung tâm, bắt buộc đối đầu PvP trực tiếp.
+   ================================================================ */
+function computeZoneCells() {
+  const cx = CFG.ZONE_CENTER_X, cy = CFG.ZONE_CENTER_Y, r = CFG.ZONE_RADIUS;
+  const cells = [];
+  for (let y = cy - r; y <= cy + r; y++) {
+    for (let x = cx - r; x <= cx + r; x++) {
+      if (x < 0 || x >= CFG.W || y < 0 || y >= CFG.H) continue;
+      if (Math.abs(x - cx) + Math.abs(y - cy) > r) continue;
+      // Include all cells in radius (floor check done at draw/update time since grid may not exist yet)
+      cells.push({ x, y });
+    }
+  }
+  return cells;
+}
+
+function initZone() {
+  GS.zone = {
+    cells: computeZoneCells(),
+    capturedBy: -1,   // player idx owning zone (-1=neutral)
+    capturingBy: -1,  // player idx currently capturing
+    captureStart: 0,
+    captureEnd: 0,
+  };
+}
+
+function isInZone(x, y) {
+  if (!GS.zone) return false;
+  return GS.zone.cells.some(c => c.x === x && c.y === y);
+}
+
+function getZonePresence() {
+  if (!GS.zone) return { players: [], contested: false };
+  const players = GS.players.filter(p => p.alive !== false && isInZone(p.x, p.y));
+  return { players, contested: new Set(players.map(p => p.idx)).size > 1 };
+}
+
+/* updateZoneControl – FSM per frame (host/offline authority).
+   Neutral     → 1 player in zone → Capturing (timer starts)
+   Capturing   → contested     → reset to Neutral
+   Capturing   → timer expires → Captured
+   Captured    → new player enters solo → re-Capturing for new owner
+   Captured    → no change     → owner keeps bonus energy regen       */
+function updateZoneControl() {
+  if (!GS.zone || !GS.running) return;
+  if (!GS.grid) return;
+  const now = Date.now();
+  const z = GS.zone;
+  const { players, contested } = getZonePresence();
+
+  if (contested) {
+    // Contested: pause/reset capture
+    z.capturingBy = -1;
+    z.captureStart = 0;
+    z.captureEnd = 0;
+    return;
+  }
+
+  if (players.length === 0) {
+    z.capturingBy = -1;
+    z.captureStart = 0;
+    z.captureEnd = 0;
+    return;
+  }
+
+  const solo = players[0];
+  // Already owned by this player — nothing to do
+  if (z.capturedBy === solo.idx && z.capturingBy === -1) return;
+
+  if (isStunned(solo, now)) {
+    z.capturingBy = -1;
+    z.captureStart = 0;
+    z.captureEnd = 0;
+    return;
+  }
+
+  // Start or continue capture
+  if (z.capturingBy !== solo.idx) {
+    z.capturingBy = solo.idx;
+    z.captureStart = now;
+    z.captureEnd = now + CFG.ZONE_CAPTURE_MS;
+  }
+
+  if (now >= z.captureEnd) {
+    const prev = z.capturedBy;
+    z.capturedBy = solo.idx;
+    z.capturingBy = -1;
+    z.captureStart = 0;
+    z.captureEnd = 0;
+    if (prev !== solo.idx) {
+      showHudMsg(`${solo.name} chiếm được Zone! ⚡ Nhận thêm năng lượng!`);
+      queueSyncEvent('zone_captured', { playerIdx: solo.idx, prevOwner: prev });
+    }
+  }
+}
+
+/* ================================================================
+   ENERGY REGEN – gọi qua setInterval.
+   Zone owner nhận ENERGY_ZONE_BONUS_MULT × regen.
+   Liên kết influence map: zone bonus tạo ra resource advantage
+   buộc CPU phải tranh giành objective trung tâm bản đồ.
+   ================================================================ */
+function energyRegenTick() {
+  if (!GS.running) return;
+  for (const p of GS.players) {
+    if (!p) continue;
+    const mult = (GS.zone && GS.zone.capturedBy === p.idx)
+      ? CFG.ENERGY_ZONE_BONUS_MULT : 1;
+    p.energy = Math.min(CFG.ENERGY_MAX,
+      (p.energy ?? CFG.ENERGY_MAX) + CFG.ENERGY_REGEN_PER_TICK * mult);
+  }
+}
+
 function useDash(pidx, reqDir = null) {
   const now = Date.now();
   const p = GS.players[pidx];
@@ -3807,6 +4309,7 @@ function useDash(pidx, reqDir = null) {
   const dir = reqDir || p.lastMoveDir || { dx: 0, dy: -1 };
   if (!dir || (dir.dx === 0 && dir.dy === 0)) return false;
   p.dashCdUntil = now + CFG.DASH_COOLDOWN_MS;
+  drainEnergy(p, CFG.DASH_ENERGY);
 
   let moved = 0;
   for (let i = 0; i < CFG.DASH_DISTANCE; i++) {
@@ -3814,7 +4317,10 @@ function useDash(pidx, reqDir = null) {
     moved++;
   }
   queueSyncEvent('skill_dash', { playerIdx: pidx, dx: dir.dx, dy: dir.dy, moved });
-  if (moved > 0) showHudMsg(`${p.name} dùng Dash!`);
+  if (moved > 0) {
+    showHudMsg(`${p.name} dùng Dash!`);
+    vfxDash(p, dir, moved);
+  }
   return moved > 0;
 }
 
@@ -3823,6 +4329,7 @@ function useShockPulse(pidx) {
   const p = GS.players[pidx];
   if (!p || !canUseShock(p, now)) return false;
   p.shockCdUntil = now + CFG.SHOCK_COOLDOWN_MS;
+  drainEnergy(p, CFG.SHOCK_ENERGY);
   const victims = [];
   for (const e of GS.players) {
     if (!e || e.idx === pidx) continue;
@@ -3835,6 +4342,7 @@ function useShockPulse(pidx) {
   }
   queueSyncEvent('skill_shock', { playerIdx: pidx, victims });
   showHudMsg(victims.length ? `${p.name} làm choáng ${victims.length} mục tiêu!` : `${p.name} dùng Shock Pulse`);
+  vfxShock(p, victims);
   return true;
 }
 
@@ -3844,8 +4352,149 @@ function useShield(pidx) {
   if (!p || !canUseShield(p, now)) return false;
   p.shieldCdUntil = now + CFG.SHIELD_COOLDOWN_MS;
   p.shieldUntil = now + CFG.SHIELD_DURATION_MS;
+  drainEnergy(p, CFG.SHIELD_ENERGY);
   queueSyncEvent('skill_shield', { playerIdx: pidx, until: p.shieldUntil });
   showHudMsg(`${p.name} kích hoạt Shield`);
+  vfxShield(p);
+  return true;
+}
+
+/* ================================================================
+   PUSH SKILL – đẩy địch ra xa, gây stun nếu va tường.
+   Thuật toán: 4-directional forced-walk, terminate on wall collision.
+   Interaction: Shield blocks; holder drops treasure when pushed.
+   ================================================================ */
+function usePush(pidx) {
+  const now = Date.now();
+  const p = GS.players[pidx];
+  if (!p || !canUsePush(p, now)) return false;
+  p.pushCdUntil = now + CFG.PUSH_COOLDOWN_MS;
+  drainEnergy(p, CFG.PUSH_ENERGY);
+  const victims = [];
+  for (const e of GS.players) {
+    if (!e || e.idx === pidx) continue;
+    if (manhattan(p, e) > 1) continue;
+    if (hasShield(e, now)) continue;
+    // Determine push direction (4-directional from pusher to target)
+    let fx = Math.sign(e.x - p.x);
+    let fy = Math.sign(e.y - p.y);
+    // Resolve diagonal → prefer horizontal then vertical
+    if (fx !== 0 && fy !== 0) { fy = 0; }
+    if (fx === 0 && fy === 0) { fy = e.y >= p.y ? 1 : -1; }
+    let hitWall = false;
+    for (let step = 0; step < CFG.PUSH_DISTANCE; step++) {
+      const nx = e.x + fx, ny = e.y + fy;
+      if (nx < 0 || nx >= CFG.W || ny < 0 || ny >= CFG.H ||
+          GS.grid[ny * CFG.W + nx] === CFG.T_WALL) {
+        hitWall = true;
+        break;
+      }
+      e.px = e.x; e.py = e.y; e.lerpT = 0;
+      e.x = nx; e.y = ny;
+      e.lastMoveDir = { dx: fx, dy: fy };
+    }
+    // Wall collision → brief stun (bait mechanic: push into wall corner)
+    if (hitWall) {
+      e.stunnedUntil = Math.max(e.stunnedUntil || 0, now + CFG.PUSH_WALL_STUN_MS);
+    }
+    // Treasure holder drops on push
+    if (e.has) dropTreasureAtHolder(e, 'push');
+    // Interrupt contest/channel of pushed player
+    if (GS.contest?.active && (GS.contest.actorIdx === e.idx || GS.contest.holderIdx === e.idx))
+      cancelContest('push', false);
+    if (GS.goalChannel?.active && GS.goalChannel.playerIdx === e.idx)
+      cancelGoalChannel('push');
+    victims.push(e.idx);
+  }
+  queueSyncEvent('skill_push', { playerIdx: pidx, victims });
+  showHudMsg(victims.length
+    ? `${p.name} đẩy ${victims.length} mục tiêu! ➡️`
+    : `${p.name} dùng Push (miss)`);
+  vfxPush(p, victims);
+  return true;
+}
+
+/* ================================================================
+   LASSO SKILL – quăng dây thừng dài 4 ô theo hướng di chuyển.
+   Thuật toán: tia thẳng theo lastMoveDir, dừng tại tường.
+   Kết quả:
+     • Trúng kho báu dưới đất → nhặt ngay (như bước lên ô kho báu)
+     • Trúng kẻ cầm kho báu  → cướp tức thì (không cần contest)
+     • Trúng kẻ địch thường  → kéo địch 1 ô về phía người dùng
+   Shield chặn tất cả các hiệu ứng trúng.
+   ================================================================ */
+function useLasso(pidx) {
+  const now = Date.now();
+  const p = GS.players[pidx];
+  if (!p || !canUseLasso(p, now)) return false;
+  p.lassoCdUntil = now + CFG.LASSO_COOLDOWN_MS;
+  drainEnergy(p, CFG.LASSO_ENERGY);
+
+  const dir = p.lastMoveDir || { dx: 1, dy: 0 };
+  const { dx, dy } = dir;
+  let hitX = p.x + dx, hitY = p.y + dy; // default tip = 1 step (so vfx always shows rope)
+  let result = null; // 'treasure' | 'steal' | 'pull' | 'blocked' | null(miss)
+
+  for (let i = 1; i <= CFG.LASSO_DISTANCE; i++) {
+    const cx = p.x + dx * i, cy = p.y + dy * i;
+    if (cx < 0 || cx >= CFG.W || cy < 0 || cy >= CFG.H) break;
+    if (GS.grid[cy * CFG.W + cx] === CFG.T_WALL) break;
+    hitX = cx; hitY = cy;
+
+    // ── Trúng kho báu đang nằm dưới đất ──
+    if (GS.treasureHolder === -1 && GS.treasure && GS.treasure.x === cx && GS.treasure.y === cy) {
+      p.has = true;
+      GS.treasureHolder = pidx;
+      GS.goalChannel = null;
+      result = 'treasure';
+      queueSyncEvent('lasso_treasure', { playerIdx: pidx, tx: cx, ty: cy });
+      showHudMsg(`${p.name} móc kho báu bằng dây thừng! 🪢`);
+      if (GS.mode === 'online' && GS.isHost) broadcastState();
+      setTimeout(regenerateMap, 600);
+      break;
+    }
+
+    // ── Trúng người chơi ──
+    const enemy = GS.players.find(e => e && e.idx !== pidx && e.x === cx && e.y === cy);
+    if (enemy) {
+      if (hasShield(enemy, now)) {
+        result = 'blocked';
+        queueSyncEvent('lasso_blocked', { playerIdx: pidx, targetIdx: enemy.idx });
+        showHudMsg(`${p.name} quăng dây nhưng bị Shield chặn! 🛡`);
+        break;
+      }
+      if (enemy.has) {
+        // Cướp kho báu
+        enemy.has = false;
+        p.has = true;
+        GS.treasureHolder = pidx;
+        setPlayerGrace(enemy, CFG.TREASURE_DROP_GRACE_MS);
+        if (GS.contest?.active &&
+            (GS.contest.holderIdx === enemy.idx || GS.contest.actorIdx === enemy.idx))
+          cancelContest('lasso', false);
+        if (GS.goalChannel?.active && GS.goalChannel.playerIdx === enemy.idx)
+          cancelGoalChannel('lasso');
+        result = 'steal';
+        queueSyncEvent('lasso_steal', { playerIdx: pidx, targetIdx: enemy.idx, tx: cx, ty: cy });
+        showHudMsg(`${p.name} cướp kho báu từ ${enemy.name} bằng dây thừng! 🪢`);
+      } else {
+        // Kéo địch 1 ô về phía người quăng
+        const nx = enemy.x - dx, ny = enemy.y - dy;
+        if (nx >= 0 && nx < CFG.W && ny >= 0 && ny < CFG.H
+            && GS.grid[ny * CFG.W + nx] !== CFG.T_WALL) {
+          enemy.px = enemy.x; enemy.py = enemy.y; enemy.lerpT = 0;
+          enemy.x = nx; enemy.y = ny;
+          enemy.lastMoveDir = { dx: -dx, dy: -dy };
+        }
+        result = 'pull';
+        queueSyncEvent('lasso_pull', { playerIdx: pidx, targetIdx: enemy.idx, tx: cx, ty: cy });
+        showHudMsg(`${p.name} kéo ${enemy.name} bằng dây thừng! 🪢`);
+      }
+      break;
+    }
+  }
+
+  vfxLasso(p, hitX, hitY, result);
   return true;
 }
 
@@ -3998,6 +4647,8 @@ function requestUseSkill(skill, pidx = GS.myIdx) {
   if (skill === 'dash') ok = useDash(pidx);
   else if (skill === 'shock') ok = useShockPulse(pidx);
   else if (skill === 'shield') ok = useShield(pidx);
+  else if (skill === 'push') ok = usePush(pidx);
+  else if (skill === 'lasso') ok = useLasso(pidx);
   if (ok && GS.mode === 'online' && GS.isHost) broadcastState(0, `skill_${skill}`);
   return ok;
 }
@@ -4137,7 +4788,8 @@ function clearGameIntervals() {
   clearInterval(GS._cpuInterval);
   clearInterval(GS._trapInterval);
   clearInterval(GS._cdInterval);
-  GS._monsterInterval=GS._cpuInterval=GS._trapInterval=GS._cdInterval=null;
+  clearInterval(GS._energyInterval);
+  GS._monsterInterval=GS._cpuInterval=GS._trapInterval=GS._cdInterval=GS._energyInterval=null;
 }
 
 /* ================================================================
@@ -4935,6 +5587,26 @@ function selectCpuTarget(cpu, state) {
       GS.cpuDebug.chokeTarget = null;
       break;
   }
+  // Zone control: CPU tìm đến vùng trung tâm khi không có treasure gấp và zone chưa thuộc về mình.
+  if (GS.zone && GS.cpuDiff !== 'easy' && !cpu.has) {
+    const zoneNotOwned = GS.zone.capturedBy !== cpu.idx;
+    const zoneNotCapturing = GS.zone.capturingBy !== cpu.idx;
+    const lowEnergy = (cpu.energy ?? CFG.ENERGY_MAX) < CFG.ENERGY_MAX * 0.55;
+    const isSeekState = state === CPU_STATES.SEEK_TREASURE;
+    const isAmbushState = state === CPU_STATES.AMBUSH;
+    // Seek zone khi: energy thấp (cần regen 2×) + zone chưa owned, hoặc hard mode + zone chưa controlled
+    if (zoneNotOwned && (lowEnergy || (GS.cpuDiff === 'hard' && zoneNotCapturing)) && (isSeekState || isAmbushState)) {
+      const distToZone = Math.abs(cpu.x - CFG.ZONE_CENTER_X) + Math.abs(cpu.y - CFG.ZONE_CENTER_Y);
+      const enemy = pickPrimaryEnemy(cpu);
+      const enemyDistToZone = enemy ? Math.abs(enemy.x - CFG.ZONE_CENTER_X) + Math.abs(enemy.y - CFG.ZONE_CENTER_Y) : 999;
+      // Chỉ seek zone nếu CPU gần hơn hoặc bằng enemy, hoặc nếu không ai đang capturing
+      if (distToZone <= enemyDistToZone + 1 || GS.zone.capturingBy < 0) {
+        target = { x: CFG.ZONE_CENTER_X, y: CFG.ZONE_CENTER_Y };
+        GS.cpuDebug.reason = (GS.cpuDebug.reason || '') + ` | zone-seek(e=${Math.round(cpu.energy ?? 100)})`;
+      }
+    }
+  }
+
   if (target) {
     ai.targetLock = {
       state,
@@ -5617,6 +6289,19 @@ function tryCpuCombatSkills(cpu, state, target) {
     }
   }
 
+  // Push để đẩy enemy vào tường hoặc ngắt contest/channel.
+  if (canUsePush(cpu, now) && distEnemy <= 1) {
+    const wallScore = countOpenNeighbors(enemy.x, enemy.y);
+    const isHardMode = GS.cpuDiff === 'hard';
+    // Ưu tiên push khi enemy gần tường (≤2 exits) hoặc chế độ hard
+    if (wallScore <= 2 || isHardMode || (GS.contest?.active && GS.contest.actorIdx === enemy.idx)) {
+      if (usePush(cpu.idx)) {
+        GS.cpuDebug.reason += ` | cpu=push(wallScore=${wallScore})`;
+        return true;
+      }
+    }
+  }
+
   // Shield khi đang cầm treasure và nguy cơ bị cướp hoặc đi qua choke.
   const nearChoke = isCellChokePoint(cpu.x, cpu.y);
   if (canUseShield(cpu, now) && (cpu.has && distEnemy <= 2 || (cpu.has && nearChoke))) {
@@ -5636,6 +6321,46 @@ function tryCpuCombatSkills(cpu, state, target) {
         if (useDash(cpu.idx, { dx: d.dx, dy: d.dy })) {
           GS.cpuDebug.reason += ` | cpu=dash(${cpu.has ? 'escape' : 'engage'})`;
           return true;
+        }
+      }
+    }
+  }
+
+  // Lasso khi kho báu nằm trong tầm 4 ô (không cần đến gần) hoặc enemy cầm kho báu gần.
+  if (canUseLasso(cpu, now) && GS.cpuDiff !== 'easy') {
+    const lassoDir = cpu.lastMoveDir || { dx: 1, dy: 0 };
+    // Ưu tiên quăng về phía kho báu nếu ở trong tầm thẳng hàng
+    const treasureTarget = !cpu.has && GS.treasureHolder === -1 ? GS.treasure : null;
+    if (treasureTarget) {
+      const ddx = Math.sign(treasureTarget.x - cpu.x);
+      const ddy = Math.sign(treasureTarget.y - cpu.y);
+      // Kiểm tra thẳng hàng (cùng hàng hoặc cùng cột)
+      const aligned = (ddx !== 0 && ddy === 0 && treasureTarget.y === cpu.y)
+                   || (ddy !== 0 && ddx === 0 && treasureTarget.x === cpu.x);
+      const dist = Math.abs(treasureTarget.x - cpu.x) + Math.abs(treasureTarget.y - cpu.y);
+      if (aligned && dist <= CFG.LASSO_DISTANCE) {
+        cpu.lastMoveDir = { dx: ddx, dy: ddy };
+        if (useLasso(cpu.idx)) {
+          GS.cpuDebug.reason += ' | cpu=lasso(treasure)';
+          return true;
+        }
+      }
+    }
+    // Quăng về phía enemy cầm kho báu nếu thẳng hàng
+    if (!cpu.has && GS.treasureHolder >= 0 && GS.treasureHolder !== cpu.idx) {
+      const holder = GS.players[GS.treasureHolder];
+      if (holder) {
+        const ddx = Math.sign(holder.x - cpu.x);
+        const ddy = Math.sign(holder.y - cpu.y);
+        const aligned = (ddx !== 0 && ddy === 0 && holder.y === cpu.y)
+                     || (ddy !== 0 && ddx === 0 && holder.x === cpu.x);
+        const dist = Math.abs(holder.x - cpu.x) + Math.abs(holder.y - cpu.y);
+        if (aligned && dist <= CFG.LASSO_DISTANCE && !hasShield(holder, now)) {
+          cpu.lastMoveDir = { dx: ddx, dy: ddy };
+          if (useLasso(cpu.idx)) {
+            GS.cpuDebug.reason += ' | cpu=lasso(steal)';
+            return true;
+          }
         }
       }
     }
@@ -6064,6 +6789,7 @@ function renderLoop(ts) {
     }
     updateContestLogic();
     updateGoalChannel();
+    updateZoneControl();
   }
   
   // FPS counter
@@ -6079,6 +6805,296 @@ function renderLoop(ts) {
   drawFrame();
   updateDebugPanel();
   updateHUD();
+}
+
+/* ================================================================
+   VFX – Particle & Effect System
+   Các loại hiệu ứng: ring | trail | spark | label | chevron | hex
+   ================================================================ */
+function spawnVfx(type, x, y, opts) {
+  if (!GS.vfx) GS.vfx = [];
+  GS.vfx.push({ type, x, y, spawnAt: Date.now(), ...opts });
+}
+
+// ── Dash: trail dots theo đường đi + ring xuất phát ──
+function vfxDash(p, dir, moved) {
+  const T = CFG.TILE;
+  const ox = (p.x - dir.dx * moved) * T + T / 2;
+  const oy = (p.y - dir.dy * moved) * T + T / 2;
+  // Whoosh ring at origin
+  spawnVfx('ring', ox, oy, { color: '#70c8ff', r0: T * 0.2, r1: T * 2.2, life: 340, alpha: 0.85, lineW: 2.5 });
+  // Speed lines
+  for (let i = 0; i <= moved; i++) {
+    const tx = (p.x - dir.dx * (moved - i)) * T + T / 2;
+    const ty = (p.y - dir.dy * (moved - i)) * T + T / 2;
+    spawnVfx('trail', tx, ty, { color: '#90d8ff', r: T * 0.38, life: 280 + i * 60, delay: i * 18, alpha: 0.8 });
+  }
+  // Velocity sparks flying backward from destination
+  for (let s = 0; s < 6; s++) {
+    const ang = Math.atan2(-dir.dy, -dir.dx) + (Math.random() - 0.5) * 1.4;
+    spawnVfx('spark', p.x * T + T / 2, p.y * T + T / 2, {
+      color: s % 2 === 0 ? '#c0eeff' : '#3fb0ff',
+      vx: Math.cos(ang), vy: Math.sin(ang), dist: T * (1.2 + Math.random()),
+      life: 260 + Math.random() * 80,
+    });
+  }
+  // Label
+  spawnVfx('label', p.x * T + T / 2, p.y * T - 2, { text: '⚡ DASH', color: '#90d8ff', size: 8, life: 600 });
+}
+
+// ── Shock: expanding ring + 8 sparks + stun flash per victim ──
+function vfxShock(p, victims) {
+  const T = CFG.TILE;
+  const cx = p.x * T + T / 2, cy = p.y * T + T / 2;
+  // Big shock ring
+  spawnVfx('ring', cx, cy, { color: '#ffe040', r0: T * 0.3, r1: T * (CFG.SHOCK_RANGE_MANHATTAN + 1.3), life: 420, alpha: 1, lineW: 3 });
+  spawnVfx('ring', cx, cy, { color: '#fff8a0', r0: T * 0.1, r1: T * (CFG.SHOCK_RANGE_MANHATTAN + 0.6), life: 280, alpha: 0.5, lineW: 1.5 });
+  // Fill flash
+  spawnVfx('fill-ring', cx, cy, { color: '#ffe040', r0: 0, r1: T * (CFG.SHOCK_RANGE_MANHATTAN + 1), life: 200, alpha: 0.25 });
+  // Radial sparks
+  for (let s = 0; s < 10; s++) {
+    const ang = (s / 10) * Math.PI * 2;
+    spawnVfx('spark', cx, cy, {
+      color: s % 3 === 0 ? '#fff9c0' : '#ffd040',
+      vx: Math.cos(ang), vy: Math.sin(ang), dist: T * (1.8 + Math.random() * 1.2),
+      life: 380 + Math.random() * 100,
+    });
+  }
+  // Stun flash on each victim
+  for (const vi of victims) {
+    const e = GS.players[vi];
+    if (!e) continue;
+    const ex = e.x * T + T / 2, ey = e.y * T + T / 2;
+    spawnVfx('ring', ex, ey, { color: '#ffee60', r0: T * 0.5, r1: T * 1.4, life: 320, alpha: 0.9, lineW: 2 });
+    spawnVfx('label', ex, ey - T * 0.4, { text: '✶ STUN', color: '#ffe040', size: 8, life: 700 });
+  }
+  spawnVfx('label', cx, cy - T * 1.2, { text: '⚡ SHOCK', color: '#ffe878', size: 9, life: 650 });
+}
+
+// ── Shield: cyan hex ring + shimmer burst ──
+function vfxShield(p) {
+  const T = CFG.TILE;
+  const cx = p.x * T + T / 2, cy = p.y * T + T / 2;
+  // Hex-like ring (6-sided approx via arc + slight edges)
+  spawnVfx('ring', cx, cy, { color: '#70e8ff', r0: T * 0.6, r1: T * 1.3, life: 480, alpha: 1, lineW: 3 });
+  spawnVfx('ring', cx, cy, { color: '#b0f4ff', r0: T * 0.4, r1: T * 1.0, life: 300, alpha: 0.6, lineW: 1.5 });
+  spawnVfx('fill-ring', cx, cy, { color: '#40c8ff', r0: 0, r1: T * 1.1, life: 260, alpha: 0.22 });
+  // Shimmer sparks rotating around player
+  for (let s = 0; s < 8; s++) {
+    const ang = (s / 8) * Math.PI * 2 + Math.random() * 0.5;
+    spawnVfx('spark', cx, cy, {
+      color: s % 2 === 0 ? '#c8f8ff' : '#40c8ff',
+      vx: Math.cos(ang), vy: Math.sin(ang), dist: T * (1.0 + Math.random() * 0.6),
+      life: 400 + Math.random() * 120,
+    });
+  }
+  spawnVfx('label', cx, cy - T * 1.1, { text: '🛡 SHIELD', color: '#80ecff', size: 8, life: 650 });
+}
+
+// ── Push: orange shockwave + directional chevron arrows ──
+function vfxPush(p, victims) {
+  const T = CFG.TILE;
+  const cx = p.x * T + T / 2, cy = p.y * T + T / 2;
+  // Origin burst
+  spawnVfx('ring', cx, cy, { color: '#ff8030', r0: T * 0.3, r1: T * 2.0, life: 360, alpha: 0.9, lineW: 3 });
+  spawnVfx('fill-ring', cx, cy, { color: '#ff6010', r0: 0, r1: T * 1.2, life: 200, alpha: 0.2 });
+  // Orange sparks flying outward
+  for (let s = 0; s < 8; s++) {
+    const ang = (s / 8) * Math.PI * 2;
+    spawnVfx('spark', cx, cy, {
+      color: s % 2 === 0 ? '#ffb060' : '#ff5010',
+      vx: Math.cos(ang), vy: Math.sin(ang), dist: T * (1.4 + Math.random()),
+      life: 300 + Math.random() * 80,
+    });
+  }
+  // Per-victim: chevron in push direction + impact ring
+  for (const vi of victims) {
+    const e = GS.players[vi];
+    if (!e) continue;
+    const fx = Math.sign(e.x - p.x) || 0;
+    const fy = fx !== 0 ? 0 : Math.sign(e.y - p.y) || 1;
+    const ex = e.x * T + T / 2, ey = e.y * T + T / 2;
+    spawnVfx('chevron', cx, cy, { color: '#ff9040', dx: fx, dy: fy, life: 400, size: T });
+    spawnVfx('ring', ex, ey, { color: '#ffaa50', r0: T * 0.3, r1: T * 1.5, life: 340, alpha: 0.8, lineW: 2 });
+    if (e.stunnedUntil > Date.now()) {
+      spawnVfx('label', ex, ey - T * 0.5, { text: '💥 WALL!', color: '#ffaa40', size: 9, life: 750 });
+    }
+  }
+  spawnVfx('label', cx, cy - T * 1.2, { text: '💥 PUSH', color: '#ffb060', size: 9, life: 650 });
+}
+
+// ── Lasso: rope line + impact flash + result label ──
+function vfxLasso(p, hitX, hitY, result) {
+  const T = CFG.TILE;
+  const sx = p.x * T + T / 2, sy = p.y * T + T / 2;
+  const ex = hitX * T + T / 2, ey = hitY * T + T / 2;
+  // Animated rope
+  spawnVfx('rope', sx, sy, { color: '#c8902a', ex, ey, life: 450, lineW: 2.5 });
+  // Impact effect at tip
+  const col = result === 'treasure' ? '#ffe080'
+            : result === 'steal'    ? '#ff9040'
+            : result === 'pull'     ? '#70c8ff'
+            : result === 'blocked'  ? '#aaaaaa'
+            : '#666666';
+  spawnVfx('ring', ex, ey, { color: col, r0: T * 0.15, r1: T * 1.5, life: 380, alpha: 0.85, lineW: 2.5 });
+  if (result === 'treasure' || result === 'steal') {
+    spawnVfx('fill-ring', ex, ey, { color: col, r0: 0, r1: T * 1.1, life: 280, alpha: 0.22 });
+    for (let s = 0; s < 8; s++) {
+      const ang = (s / 8) * Math.PI * 2;
+      spawnVfx('spark', ex, ey, {
+        color: s % 2 === 0 ? '#ffe070' : '#ffb030',
+        vx: Math.cos(ang), vy: Math.sin(ang), dist: T * (1.3 + Math.random() * 0.4), life: 360,
+      });
+    }
+    spawnVfx('label', ex, ey - T * 0.9,
+      { text: result === 'steal' ? '🪢 STOLEN!' : '🪢 GET!', color: '#ffe080', size: 10, life: 800 });
+  } else if (result === 'pull') {
+    spawnVfx('label', ex, ey - T * 0.9, { text: '🪢 PULL!', color: '#70c8ff', size: 9, life: 650 });
+  } else if (result === 'blocked') {
+    spawnVfx('label', ex, ey - T * 0.9, { text: '🛡 BLOCKED', color: '#aaaaaa', size: 8, life: 600 });
+  } else {
+    spawnVfx('label', sx, sy - T * 0.9, { text: '🪢 MISS', color: '#666', size: 8, life: 500 });
+  }
+  spawnVfx('label', sx, sy - T * 1.5, { text: '🪢 LASSO', color: '#c8902a', size: 8, life: 600 });
+}
+
+// ── Draw all active VFX ──
+function drawVfx(T) {
+  if (!GS.vfx || !GS.vfx.length) return;
+  const now = Date.now();
+  ctx.save();
+  GS.vfx = GS.vfx.filter(v => {
+    const age = now - v.spawnAt;
+    if (age < (v.delay || 0)) return true; // not started yet
+    const t = Math.min(1, (age - (v.delay || 0)) / v.life);
+    if (t >= 1) return false;
+    const eOut = 1 - t;
+    const eOut2 = eOut * eOut;
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+
+    switch (v.type) {
+      case 'ring': {
+        const r = v.r0 + (v.r1 - v.r0) * t;
+        ctx.globalAlpha = eOut * (v.alpha || 1);
+        ctx.strokeStyle = v.color;
+        ctx.lineWidth = (v.lineW || 2) * Math.max(0.3, eOut);
+        ctx.shadowColor = v.color; ctx.shadowBlur = 6;
+        ctx.beginPath();
+        ctx.arc(v.x, v.y, Math.max(0.5, r), 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        break;
+      }
+      case 'fill-ring': {
+        const r = v.r0 + (v.r1 - v.r0) * t;
+        ctx.globalAlpha = eOut2 * (v.alpha || 0.35);
+        ctx.fillStyle = v.color;
+        ctx.beginPath();
+        ctx.arc(v.x, v.y, Math.max(0.5, r), 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+      case 'trail': {
+        ctx.globalAlpha = eOut2 * (v.alpha || 1);
+        ctx.fillStyle = v.color;
+        ctx.shadowColor = v.color; ctx.shadowBlur = 5;
+        ctx.beginPath();
+        ctx.arc(v.x, v.y, Math.max(0.5, v.r * eOut), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        break;
+      }
+      case 'spark': {
+        const easeT = Math.sin(t * Math.PI * 0.9);
+        const px2 = v.x + v.vx * easeT * v.dist;
+        const py2 = v.y + v.vy * easeT * v.dist;
+        const tailX = v.x + v.vx * easeT * v.dist * 0.7;
+        const tailY = v.y + v.vy * easeT * v.dist * 0.7;
+        ctx.globalAlpha = eOut;
+        ctx.strokeStyle = v.color;
+        ctx.lineWidth = 1.8;
+        ctx.shadowColor = v.color; ctx.shadowBlur = 4;
+        ctx.beginPath();
+        ctx.moveTo(tailX, tailY);
+        ctx.lineTo(px2, py2);
+        ctx.stroke();
+        ctx.globalAlpha = eOut2;
+        ctx.fillStyle = v.color;
+        ctx.beginPath();
+        ctx.arc(px2, py2, 1.8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        break;
+      }
+      case 'chevron': {
+        // 3 animated chevron arrows flying in direction
+        const sz = v.size || T;
+        for (let ci = 0; ci < 3; ci++) {
+          const delay = ci * 0.18;
+          const ct = Math.max(0, Math.min(1, t - delay)) / (1 - delay);
+          if (ct <= 0) continue;
+          const alpha = (ci === 0 ? 0.9 : ci === 1 ? 0.6 : 0.35) * (1 - ct);
+          if (alpha <= 0) continue;
+          ctx.globalAlpha = alpha;
+          const ox = v.x + v.dx * sz * ct * 2.5;
+          const oy = v.y + v.dy * sz * ct * 2.5;
+          const px = -v.dy, py = v.dx; // perpendicular
+          ctx.strokeStyle = v.color;
+          ctx.lineWidth = 2.5 - ci * 0.6;
+          ctx.shadowColor = v.color; ctx.shadowBlur = 5;
+          ctx.beginPath();
+          ctx.moveTo(ox + px * sz * 0.4 - v.dx * sz * 0.3, oy + py * sz * 0.4 - v.dy * sz * 0.3);
+          ctx.lineTo(ox + v.dx * sz * 0.3, oy + v.dy * sz * 0.3);
+          ctx.lineTo(ox - px * sz * 0.4 - v.dx * sz * 0.3, oy - py * sz * 0.4 - v.dy * sz * 0.3);
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+        }
+        break;
+      }
+      case 'label': {
+        const fadeIn = Math.min(1, t / 0.12);
+        ctx.globalAlpha = Math.min(fadeIn, eOut * 1.4);
+        ctx.fillStyle = v.color;
+        ctx.font = `bold ${v.size || 9}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.shadowColor = v.color; ctx.shadowBlur = 10;
+        ctx.fillText(v.text, v.x, v.y - t * 18);
+        ctx.shadowBlur = 0;
+        break;
+      }
+      case 'rope': {
+        // Rope extends to tip then retracts – sinusoidal progress
+        const prog = t < 0.55 ? t / 0.55 : 1 - (t - 0.55) / 0.45;
+        const rx = v.x + (v.ex - v.x) * prog;
+        const ry = v.y + (v.ey - v.y) * prog;
+        ctx.globalAlpha = eOut * 0.9;
+        ctx.strokeStyle = v.color;
+        ctx.lineWidth = v.lineW || 2.5;
+        ctx.setLineDash([7, 4]);
+        ctx.shadowColor = v.color; ctx.shadowBlur = 6;
+        ctx.beginPath();
+        ctx.moveTo(v.x, v.y);
+        ctx.lineTo(rx, ry);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.shadowBlur = 0;
+        // Hook tip dot
+        ctx.globalAlpha = eOut2 * 0.95;
+        ctx.fillStyle = '#fff';
+        ctx.shadowColor = v.color; ctx.shadowBlur = 5;
+        ctx.beginPath();
+        ctx.arc(rx, ry, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        break;
+      }
+    }
+    return true;
+  });
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+  ctx.restore();
 }
 
 function drawFrame() {
@@ -6172,6 +7188,50 @@ function drawFrame() {
 
   drawChokeOverlay();
   
+  // ── Zone Control visual – trước base markers ──
+  if (GS.zone && GS.zone.cells && GS.grid) {
+    const z = GS.zone;
+    ctx.save();
+    for (const c of z.zone_floor_cells || z.cells) {
+      if (!GS.grid || GS.grid[c.y*W+c.x] === CFG.T_WALL) continue;
+      const px = c.x*T, py = c.y*T;
+      let fillClr;
+      if (z.capturedBy >= 0) {
+        fillClr = CFG.PLAYER_COLORS[z.capturedBy] + '28';
+      } else if (z.capturingBy >= 0) {
+        fillClr = CFG.PLAYER_COLORS[z.capturingBy] + '1a';
+      } else {
+        fillClr = '#3fb0ff15';
+      }
+      ctx.fillStyle = fillClr;
+      ctx.fillRect(px, py, T, T);
+      // Border ring
+      ctx.strokeStyle = z.capturedBy >= 0
+        ? CFG.PLAYER_COLORS[z.capturedBy] + '55'
+        : (z.capturingBy >= 0 ? CFG.PLAYER_COLORS[z.capturingBy] + '40' : '#3fb0ff30');
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(px+0.5, py+0.5, T-1, T-1);
+    }
+    // Cap progress bar at zone center
+    if (z.capturingBy >= 0) {
+      const nowZ = Date.now();
+      const pct = Math.max(0, Math.min(1, (nowZ - z.captureStart) / CFG.ZONE_CAPTURE_MS));
+      const bx = CFG.ZONE_CENTER_X*T+1, by = CFG.ZONE_CENTER_Y*T+T-3;
+      ctx.fillStyle = '#000a';
+      ctx.fillRect(bx, by, T-2, 2);
+      ctx.fillStyle = CFG.PLAYER_COLORS[z.capturingBy];
+      ctx.fillRect(bx, by, (T-2)*pct, 2);
+    }
+    // Zone center symbol
+    ctx.font = `bold ${T+1}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.globalAlpha = 0.4;
+    ctx.fillStyle = z.capturedBy >= 0 ? CFG.PLAYER_COLORS[z.capturedBy] : '#3fb0ff';
+    ctx.fillText('⚡', CFG.ZONE_CENTER_X*T+T/2, CFG.ZONE_CENTER_Y*T+T-1);
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+  
   // Vẽ legend graph coloring khi debug bật
   if(GS.graphColoring && GS.gcResult){
     const PALETTE=[
@@ -6255,6 +7315,9 @@ function drawFrame() {
     ctx.restore();
   }
   
+  // VFX layer – vẽ hiệu ứng kỹ năng (dưới player, trên tiles)
+  drawVfx(T);
+
   // Vẽ người chơi
   const now = Date.now();
   for(const p of GS.players){
@@ -6342,6 +7405,13 @@ function drawFrame() {
     ctx.font='bold 7px sans-serif';
     ctx.textAlign='center';
     ctx.fillText(p.name.substring(0,6), cx, ry+T+6);
+    // Energy bar – nhỏ bên dưới tên
+    const eP = Math.max(0, Math.min(1, (p.energy ?? CFG.ENERGY_MAX) / CFG.ENERGY_MAX));
+    const ebX = rx+1, ebY = ry+T+9;
+    ctx.fillStyle='#08081a';
+    ctx.fillRect(ebX, ebY, T-2, 2);
+    ctx.fillStyle = eP > 0.5 ? '#3fb0ff' : (eP > 0.25 ? '#f7aa00' : '#ff4444');
+    ctx.fillRect(ebX, ebY, (T-2)*eP, 2);
   }
 }
 
@@ -6359,21 +7429,31 @@ function updateHUD() {
     dash: document.getElementById('skill-dash'),
     shock: document.getElementById('skill-shock'),
     shield: document.getElementById('skill-shield'),
+    push: document.getElementById('skill-push'),
+    lasso: document.getElementById('skill-lasso'),
   };
   if (me) {
+    const en = me.energy ?? CFG.ENERGY_MAX;
     const dashLeft = Math.max(0, me.dashCdUntil - now);
     const shockLeft = Math.max(0, me.shockCdUntil - now);
     const shieldLeft = Math.max(0, me.shieldCdUntil - now);
-    const syncSkill = (elx, name, leftMs) => {
+    const pushLeft = Math.max(0, me.pushCdUntil - now);
+    const lassoLeft = Math.max(0, me.lassoCdUntil - now);
+    const syncSkill = (elx, name, leftMs, energyCost) => {
       if (!elx) return;
-      const ready = leftMs <= 0;
+      const cdReady = leftMs <= 0;
+      const enOk = en >= energyCost;
+      const ready = cdReady && enOk;
       elx.classList.toggle('ready', ready);
       elx.classList.toggle('cd', !ready);
-      elx.innerHTML = `${name}<br><b>${ready ? 'Ready' : `${(leftMs/1000).toFixed(1)}s`}</b>`;
+      const cdStr = cdReady ? (enOk ? 'Ready' : `⚡${Math.round(en)}/${energyCost}`) : `${(leftMs/1000).toFixed(1)}s`;
+      elx.innerHTML = `${name}<br><b>${cdStr}</b>`;
     };
-    syncSkill(skillEls.dash, 'Dash', dashLeft);
-    syncSkill(skillEls.shock, 'Shock', shockLeft);
-    syncSkill(skillEls.shield, 'Shield', shieldLeft);
+    syncSkill(skillEls.dash, 'Dash', dashLeft, CFG.DASH_ENERGY);
+    syncSkill(skillEls.shock, 'Shock', shockLeft, CFG.SHOCK_ENERGY);
+    syncSkill(skillEls.shield, 'Shield', shieldLeft, CFG.SHIELD_ENERGY);
+    syncSkill(skillEls.push, 'Push', pushLeft, CFG.PUSH_ENERGY);
+    syncSkill(skillEls.lasso, 'Lasso', lassoLeft, CFG.LASSO_ENERGY);
 
     const states = [];
     if (isStunned(me, now)) states.push('STUN');
@@ -6382,6 +7462,32 @@ function updateHUD() {
     if (!states.length) states.push('NORMAL');
     const se = document.getElementById('hud-states');
     if (se) se.textContent = `State: ${states.join(' | ')}`;
+
+    // Energy bar
+    const ef = document.getElementById('hud-energy-fill');
+    if (ef) ef.style.width = `${Math.min(100, en / CFG.ENERGY_MAX * 100).toFixed(1)}%`;
+    const ev = document.getElementById('hud-energy-val');
+    if (ev) ev.textContent = Math.round(en);
+  }
+
+  // Zone status
+  const zoneEl = document.getElementById('hud-zone');
+  if (zoneEl && GS.zone) {
+    const z = GS.zone;
+    if (z.capturedBy === GS.myIdx) {
+      zoneEl.className = 'owned-me';
+      zoneEl.textContent = '⚡ Zone: Bạn';
+    } else if (z.capturedBy >= 0) {
+      zoneEl.className = 'owned-other';
+      zoneEl.textContent = `⚡ Zone: P${z.capturedBy+1}`;
+    } else if (z.capturingBy >= 0) {
+      zoneEl.className = 'capturing';
+      const pct = Math.max(0, Math.min(100, (Date.now()-z.captureStart)/CFG.ZONE_CAPTURE_MS*100));
+      zoneEl.textContent = `🔄 ${pct.toFixed(0)}% P${z.capturingBy+1}`;
+    } else {
+      zoneEl.className = 'neutral';
+      zoneEl.textContent = 'Zone: Neutral';
+    }
   }
 
   const contestFill = document.getElementById('hud-contest-fill');
@@ -6427,6 +7533,7 @@ window.addEventListener('keydown', e=>{
   
   // Debug panel toggle
   if(e.key==='Tab'){ e.preventDefault(); toggleDebug(); return; }
+  if(e.key==='h'||e.key==='H'||e.key==='?'){ toggleHelp(); return; }
   if(e.key==='g'||e.key==='G'){ toggleGraphColoring(); return; }
   if(e.key==='i'||e.key==='I'){ toggleInfluenceOverlay(); return; }
   if(e.key==='c'||e.key==='C'){ toggleChokeOverlay(); return; }
@@ -6438,6 +7545,8 @@ window.addEventListener('keydown', e=>{
   if (e.key === 'Shift') { e.preventDefault(); requestUseSkill('dash'); return; }
   if (e.key === 'q' || e.key === 'Q') { e.preventDefault(); requestUseSkill('shock'); return; }
   if (e.key === 'e' || e.key === 'E') { e.preventDefault(); requestUseSkill('shield'); return; }
+  if (e.key === 'r' || e.key === 'R') { e.preventDefault(); requestUseSkill('push'); return; }
+  if (e.key === 't' || e.key === 'T') { e.preventDefault(); requestUseSkill('lasso'); return; }
   if (e.key === 'f' || e.key === 'F') { e.preventDefault(); requestInteract(GS.myIdx); return; }
   
   if(!GS.running) return;
@@ -6695,6 +7804,13 @@ function mapBalanceReport() {
 }
 
 let debugOn=false;
+function toggleHelp() {
+  document.getElementById('help-overlay').classList.toggle('show');
+}
+// Đóng help khi click ngoài vùng box
+document.getElementById('help-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('help-overlay')) toggleHelp();
+});
 function toggleDebug(){
   debugOn=!debugOn;
   document.getElementById('debug-panel').classList.toggle('show',debugOn);
@@ -6938,6 +8054,33 @@ function updateDebugPanel(){
       if (monAssignEl) monAssignEl.textContent = 'Monster assign: --';
       if (monPressureEl) monPressureEl.textContent = 'Monster pressure: --';
     }
+  }
+
+  // Energy / Push CD / Zone debug
+  const dbgEnergy = document.getElementById('dbg-energy');
+  if (dbgEnergy) {
+    const now = Date.now();
+    const parts = GS.players.map((p, i) => `P${i+1}:${Math.round(p.energy ?? CFG.ENERGY_MAX)}`).join(' ');
+    dbgEnergy.textContent = `Energy: ${parts}`;
+  }
+  const dbgPushCd = document.getElementById('dbg-push-cd');
+  if (dbgPushCd) {
+    const me = GS.players[GS.myIdx];
+    if (me) {
+      const now = Date.now();
+      const left = Math.max(0, me.pushCdUntil - now);
+      dbgPushCd.textContent = `Push CD: ${(left/1000).toFixed(1)}s | Energy: ${Math.round(me.energy ?? CFG.ENERGY_MAX)}/${CFG.ENERGY_MAX}`;
+    }
+  }
+  const dbgZone = document.getElementById('dbg-zone');
+  if (dbgZone && GS.zone) {
+    const z = GS.zone;
+    const now = Date.now();
+    let pct = 0;
+    if (z.capturingBy >= 0 && z.captureEnd > z.captureStart) {
+      pct = Math.round(Math.min(100, (now - z.captureStart) / (z.captureEnd - z.captureStart) * 100));
+    }
+    dbgZone.textContent = `Zone: owned=P${z.capturedBy >= 0 ? z.capturedBy+1 : '-'} capturing=P${z.capturingBy >= 0 ? z.capturingBy+1 : '-'} pct=${pct}%`;
   }
 }
 function toggleGraphColoring(){
@@ -7204,6 +8347,7 @@ function handleSkillRequest(msg){
   if (skill === 'dash') ok = useDash(pidx);
   else if (skill === 'shock') ok = useShockPulse(pidx);
   else if (skill === 'shield') ok = useShield(pidx);
+  else if (skill === 'push') ok = usePush(pidx);
   if (ok) broadcastState(0, `skill_${skill}`);
 }
 
@@ -7241,6 +8385,8 @@ function broadcastState(ackSeq = 0, reason = 'state_update'){
       shockCdUntil:p.shockCdUntil||0,
       shieldCdUntil:p.shieldCdUntil||0,
       contestCdUntil:p.contestCdUntil||0,
+      pushCdUntil:p.pushCdUntil||0,
+      energy:p.energy??CFG.ENERGY_MAX,
       lastMoveDir:p.lastMoveDir||{dx:0,dy:0},
     })),
     monsters: GS.monsters.map((m, i) => ({
@@ -7255,6 +8401,12 @@ function broadcastState(ackSeq = 0, reason = 'state_update'){
     traps: GS.traps.map(t=>({owner:t.owner,x:t.x,y:t.y,createdAt:t.createdAt,ttl:t.ttl})),
     contest: GS.contest ? { ...GS.contest } : null,
     goalChannel: GS.goalChannel ? { ...GS.goalChannel } : null,
+    zone: GS.zone ? {
+      capturedBy: GS.zone.capturedBy,
+      capturingBy: GS.zone.capturingBy,
+      captureStart: GS.zone.captureStart,
+      captureEnd: GS.zone.captureEnd,
+    } : null,
     events: GS.netRecentEvents.slice(-10),
     regen: GS.netRegenVersion > 0 ? {
       version: GS.netRegenVersion,
@@ -7314,6 +8466,8 @@ function handleUpdate(msg){
       p.shockCdUntil = Number.isFinite(pd.shockCdUntil) ? pd.shockCdUntil : (p.shockCdUntil || 0);
       p.shieldCdUntil = Number.isFinite(pd.shieldCdUntil) ? pd.shieldCdUntil : (p.shieldCdUntil || 0);
       p.contestCdUntil = Number.isFinite(pd.contestCdUntil) ? pd.contestCdUntil : (p.contestCdUntil || 0);
+      p.pushCdUntil = Number.isFinite(pd.pushCdUntil) ? pd.pushCdUntil : (p.pushCdUntil || 0);
+      p.energy = Number.isFinite(pd.energy) ? pd.energy : (p.energy ?? CFG.ENERGY_MAX);
       if (pd.lastMoveDir && Number.isFinite(pd.lastMoveDir.dx) && Number.isFinite(pd.lastMoveDir.dy)) {
         p.lastMoveDir = { dx: pd.lastMoveDir.dx, dy: pd.lastMoveDir.dy };
       }
@@ -7336,6 +8490,12 @@ function handleUpdate(msg){
     }
   }
 
+  if (snap.zone && GS.zone) {
+    if (Number.isFinite(snap.zone.capturedBy)) GS.zone.capturedBy = snap.zone.capturedBy;
+    if (Number.isFinite(snap.zone.capturingBy)) GS.zone.capturingBy = snap.zone.capturingBy;
+    if (Number.isFinite(snap.zone.captureStart)) GS.zone.captureStart = snap.zone.captureStart;
+    if (Number.isFinite(snap.zone.captureEnd)) GS.zone.captureEnd = snap.zone.captureEnd;
+  }
   if(snap.treasure!=null) GS.treasure=snap.treasure;
   if(snap.treasureHolder!=null) GS.treasureHolder=snap.treasureHolder;
   if(snap.traps) GS.traps=snap.traps;
@@ -7430,6 +8590,7 @@ function handleRegenMap(msg){
   if(!msg.seed) return;
   GS.contest = null;
   GS.goalChannel = null;
+  initZone();
   const incomingRegenVersion = Number(msg.regenVersion ?? 0);
   if (incomingRegenVersion > 0 && incomingRegenVersion <= (GS.netLastAppliedRegenVersion || 0)) return;
   GS.seed = msg.seed;
