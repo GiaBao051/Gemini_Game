@@ -2175,45 +2175,6 @@ function hitPlayerByMonster(p) {
 // Bán kính kích hoạt đuổi theo của quái vật (Manhattan distance)
 const MONSTER_CHASE_RADIUS = 7;
 
-// Path cho quái vật: chỉ cần ở trong biên map, bỏ qua tường/chướng ngại.
-function bfsMonsterPhasing(sx, sy, tx, ty, W, H) {
-  if (sx === tx && sy === ty) return [];
-  const N = W * H;
-  const vis = new Uint8Array(N);
-  const prev = new Int32Array(N).fill(-1);
-  const q = [];
-  const start = sy * W + sx;
-  const goal = ty * W + tx;
-  q.push(start);
-  vis[start] = 1;
-  const dx = [1, -1, 0, 0], dy = [0, 0, 1, -1];
-
-  for (let qi = 0; qi < q.length; qi++) {
-    const cur = q[qi];
-    if (cur === goal) break;
-    const cx = cur % W, cy = Math.floor(cur / W);
-    for (let d = 0; d < 4; d++) {
-      const nx = cx + dx[d], ny = cy + dy[d];
-      if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
-      const ni = ny * W + nx;
-      if (vis[ni]) continue;
-      vis[ni] = 1;
-      prev[ni] = cur;
-      q.push(ni);
-    }
-  }
-
-  if (!vis[goal]) return null;
-  const path = [];
-  let node = goal;
-  while (node !== start) {
-    const p = prev[node];
-    path.unshift({ dx: node % W - p % W, dy: Math.floor(node / W) - Math.floor(p / W) });
-    node = p;
-  }
-  return path;
-}
-
 function moveMonsters() {
   if(!GS.running) return;
   const alivePlayers = GS.players.filter(p => p.alive);
@@ -2254,7 +2215,7 @@ function moveMonsters() {
     if(chaseTarget){
       // ── CHẾ ĐỘ ĐUỔI: người chơi vào vùng phát hiện → BFS đuổi ──
       if(Math.random() < 0.9){
-        const path = bfsMonsterPhasing(m.x, m.y, chaseTarget.x, chaseTarget.y, CFG.W, CFG.H);
+        const path = bfs(GS.grid, m.x, m.y, chaseTarget.x, chaseTarget.y, CFG.W, CFG.H);
         if(path && path.length){ tx = m.x + path[0].dx; ty = m.y + path[0].dy; }
         else { const d = dirs[0]; tx = m.x + d[0]; ty = m.y + d[1]; }
       } else {
@@ -2270,7 +2231,7 @@ function moveMonsters() {
         m.patrolTarget = pickPatrolPoint(m, GS.grid, CFG.W, CFG.H);
       }
       if(m.patrolTarget && Math.random() < 0.6){
-        const path = bfsMonsterPhasing(m.x, m.y, m.patrolTarget.x, m.patrolTarget.y, CFG.W, CFG.H);
+        const path = bfs(GS.grid, m.x, m.y, m.patrolTarget.x, m.patrolTarget.y, CFG.W, CFG.H);
         if(path && path.length){ tx = m.x + path[0].dx; ty = m.y + path[0].dy; }
         else { m.patrolTarget = null; const d = dirs[0]; tx = m.x + d[0]; ty = m.y + d[1]; }
       } else {
@@ -2280,7 +2241,7 @@ function moveMonsters() {
     }
 
     // ── Áp dụng di chuyển ──
-    if(tx>=0&&tx<CFG.W&&ty>=0&&ty<CFG.H){
+    if(tx>=0&&tx<CFG.W&&ty>=0&&ty<CFG.H&&GS.grid[ty*CFG.W+tx]!==CFG.T_WALL){
       m.px = m.x; m.py = m.y; m.lerpT = 0;
       m.x = tx; m.y = ty;
     }
