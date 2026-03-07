@@ -351,6 +351,8 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
   <div id="dbg-gc-danger">Nguy hiểm: --</div>
   <div id="dbg-gc-quiz">Quiz cells: --</div>
   <div id="dbg-gc-mons">Monster vùng: --</div>
+  <div id="dbg-mon-assign" style="font-size:.64rem;color:#fcb;">Monster assign: --</div>
+  <div id="dbg-mon-pressure" style="font-size:.64rem;color:#fd9;">Monster pressure: --</div>
   <div style="margin-top:6px;border-top:1px solid #fa04;padding-top:6px;color:#fa8;">🧩 CSP SOLVER</div>
   <div id="dbg-csp-status">Status: --</div>
   <div id="dbg-csp-con">Constraints: --</div>
@@ -1430,47 +1432,251 @@ function scoreChokeForDefense(cpu, choke) {
 }
 
 /* ================================================================
-   PHẦN 7 – MONSTER ASSIGNMENT (Hungarian-like heuristic)
-   Phân công mỗi quái cho một target (người chơi) theo cost matrix
-   Tránh dồn hết quái vào 1 người chơi
+   PHẦN 7 – MONSTER ASSIGNMENT (Cost-matrix heuristic assignment)
+   Đây là heuristic assignment cải tiến (không phải Hungarian đầy đủ).
+   Mục tiêu: tránh dồn quái, vẫn ưu tiên holder, giữ choke/defense khi hợp lý.
    ================================================================ */
 
-/**
- * Tính chi phí gán monster cho target.
- * Chi phí thấp = ưu tiên gán.
- */
-function computeMonsterAssignmentCost(monster, target) {
-  const dist = Math.abs(monster.x - target.x) + Math.abs(monster.y - target.y);
-  let cost = dist;
-  // Giảm chi phí mạnh nếu target đang cầm treasure → tăng áp lực holder
-  if (target.has) cost -= 10;
-  // Không gán nếu quá xa (> 20 tile): ưu tiên mục tiêu gần hơn
-  if (dist > 20) cost += dist;
-  return Math.max(0, cost);
+function _findNearestFloorCell(x, y, maxR = 6) {
+  if (!GS.grid) return { x, y };
+  if (x >= 1 && x < CFG.W - 1 && y >= 1 && y < CFG.H - 1 && GS.grid[y * CFG.W + x] !== CFG.T_WALL) return { x, y };
+  for (let r = 1; r <= maxR; r++) {
+    for (let ny = Math.max(1, y - r); ny <= Math.min(CFG.H - 2, y + r); ny++) {
+      for (let nx = Math.max(1, x - r); nx <= Math.min(CFG.W - 2, x + r); nx++) {
+        if (GS.grid[ny * CFG.W + nx] !== CFG.T_WALL) return { x: nx, y: ny };
+      }
+    }
+  }
+  return { x, y };
 }
 
-/**
- * Greedy assignment: mỗi quái → target có cost min chưa vượt quota.
- * Đảm bảo mỗi người chơi nhận tối đa ceil(M/N) quái.
- * @param {object[]} monsters
- * @param {object[]} players
- * @returns {object[]} assigned targets (same length as monsters)
- */
-function assignMonstersToTargets(monsters, players) {
-  const targets = players.filter(p => p.alive !== false);
-  if (targets.length === 0) return monsters.map(() => null);
-  const maxPer   = Math.ceil(monsters.length / targets.length);
-  const assigned = new Array(targets.length).fill(0); // đếm số quái đã gán
-  return monsters.map(m => {
-    let bestTIdx = -1, bestCost = Infinity;
-    for (let ti = 0; ti < targets.length; ti++) {
-      if (assigned[ti] >= maxPer) continue;
-      const cost = computeMonsterAssignmentCost(m, targets[ti]);
-      if (cost < bestCost) { bestCost = cost; bestTIdx = ti; }
+function _pickDefenseAnchorForPlayer(player) {
+  const base = CFG.PLAYER_BASES[player.idx] || { x: player.x, y: player.y };
+  let bestCp = null, bestScore = -1e9;
+  for (const cp of CHOKE_CACHE.points.slice(0, 20)) {
+    const dBase = Math.abs(cp.x - base.x) + Math.abs(cp.y - base.y);
+    if (dBase < 2 || dBase > 10) continue;
+    const score = cp.rank - dBase * 8 - getCellDanger(cp.x, cp.y) * 5;
+    if (score > bestScore) { bestScore = score; bestCp = cp; }
+  }
+  if (bestCp) return { x: bestCp.x, y: bestCp.y, rank: bestCp.rank };
+
+  const cx = Math.floor(CFG.W / 2), cy = Math.floor(CFG.H / 2);
+  const dx = Math.sign(cx - base.x), dy = Math.sign(cy - base.y);
+  const raw = { x: base.x + dx * 4, y: base.y + dy * 4 };
+  const p = _findNearestFloorCell(raw.x, raw.y, 5);
+  return { x: p.x, y: p.y, rank: 40 };
+}
+
+function buildMonsterAssignmentTargets(players, monsterCount = 0) {
+  const alive = players.filter(p => p.alive !== false);
+  const targets = [];
+  if (!alive.length) return targets;
+
+  const perPlayerCap = Math.max(1, Math.ceil(Math.max(monsterCount, 1) / alive.length));
+  for (const p of alive) {
+    targets.push({
+      id: `player-${p.idx}`,
+      kind: 'player',
+      x: p.x,
+      y: p.y,
+      playerIdx: p.idx,
+      hasTreasure: !!p.has,
+      maxAssigned: perPlayerCap,
+      strategicScore: 0,
+    });
+  }
+
+  const holder = alive.find(p => p.has);
+  if (holder) {
+    targets.push({
+      id: `holder-${holder.idx}`,
+      kind: 'holder',
+      x: holder.x,
+      y: holder.y,
+      playerIdx: holder.idx,
+      hasTreasure: true,
+      maxAssigned: perPlayerCap + 1,
+      strategicScore: 24,
+    });
+  }
+
+  const chokeTop = CHOKE_CACHE.points.slice(0, Math.min(6, Math.max(2, alive.length + 1)));
+  for (let i = 0; i < chokeTop.length; i++) {
+    const cp = chokeTop[i];
+    let nearest = null, bestD = 9999;
+    for (const p of alive) {
+      const d = Math.abs(cp.x - p.x) + Math.abs(cp.y - p.y);
+      if (d < bestD) { bestD = d; nearest = p; }
     }
-    if (bestTIdx >= 0) { assigned[bestTIdx]++; return targets[bestTIdx]; }
-    return targets[0]; // fallback
-  });
+    targets.push({
+      id: `choke-${i}`,
+      kind: 'choke',
+      x: cp.x,
+      y: cp.y,
+      playerIdx: nearest ? nearest.idx : null,
+      hasTreasure: false,
+      maxAssigned: 2,
+      strategicScore: cp.rank,
+      chokeRank: cp.rank,
+    });
+  }
+
+  for (const p of alive) {
+    const d = _pickDefenseAnchorForPlayer(p);
+    targets.push({
+      id: `def-${p.idx}`,
+      kind: 'defense',
+      x: d.x,
+      y: d.y,
+      playerIdx: p.idx,
+      hasTreasure: !!p.has,
+      maxAssigned: 2,
+      strategicScore: d.rank || 30,
+    });
+  }
+  return targets;
+}
+
+function computeMonsterAssignmentCost(monster, target, ctx = null) {
+  const dist = Math.abs(monster.x - target.x) + Math.abs(monster.y - target.y);
+  let cost = dist * 3;
+
+  // Ưu tiên holder có kiểm soát để vẫn cân bằng áp lực.
+  if (target.kind === 'holder' || target.hasTreasure) cost -= 22;
+  if (target.kind === 'choke') cost -= Math.min(18, (target.chokeRank || target.strategicScore || 0) * 0.09);
+  if (target.kind === 'defense') cost -= 8;
+
+  const danger = getCellDanger(target.x, target.y);
+  cost += danger * 2.2;
+
+  // Tránh assignment quá xa gây delay hiệu quả.
+  if (dist > 16) cost += (dist - 16) * 2.4;
+
+  if (ctx) {
+    const usage = ctx.targetUsage?.[target.id] || 0;
+    cost += usage * 4.5;
+
+    if (target.playerIdx != null && ctx.pressureByPlayer) {
+      const vals = Object.values(ctx.pressureByPlayer);
+      const minP = vals.length ? Math.min(...vals) : 0;
+      const projected = (ctx.pressureByPlayer[target.playerIdx] || 0) + 1;
+      const fairnessPenalty = Math.max(0, projected - (minP + 1));
+      const holderRelax = target.kind === 'holder' ? 0.5 : 1;
+      cost += fairnessPenalty * 11 * holderRelax;
+    }
+  }
+  return +Math.max(0, cost).toFixed(2);
+}
+
+function assignMonstersToTargets(monsters, players) {
+  const alivePlayers = players.filter(p => p.alive !== false);
+  if (!alivePlayers.length) {
+    GS.monsterAssignDebug = { algorithm: 'heuristic-greedy-v2', targets: [], matrix: [], byMonster: [], pressureByPlayer: {} };
+    return monsters.map(() => null);
+  }
+
+  const targets = buildMonsterAssignmentTargets(alivePlayers, monsters.length);
+  if (!targets.length) return monsters.map(() => alivePlayers[0] || null);
+
+  const pressureByPlayer = {};
+  for (const p of alivePlayers) pressureByPlayer[p.idx] = 0;
+  const targetUsage = {};
+  for (const t of targets) targetUsage[t.id] = 0;
+
+  // Baseline cost matrix để debug/report.
+  const matrix = monsters.map((m, mi) => targets.map((t, ti) => ({
+    mi,
+    ti,
+    monsterId: mi,
+    targetId: t.id,
+    cost: computeMonsterAssignmentCost(m, t, null),
+  })));
+
+  // Ưu tiên gán trước cho quái có "độ chênh lựa chọn" cao.
+  const order = monsters.map((m, mi) => {
+    const costs = targets.map(t => computeMonsterAssignmentCost(m, t, null)).sort((a, b) => a - b);
+    const gap = (costs[1] ?? costs[0] ?? 0) - (costs[0] ?? 0);
+    return { mi, gap };
+  }).sort((a, b) => b.gap - a.gap).map(x => x.mi);
+
+  const assignments = new Array(monsters.length).fill(null);
+  const byMonster = [];
+
+  for (const mi of order) {
+    const m = monsters[mi];
+    let best = null;
+    for (let ti = 0; ti < targets.length; ti++) {
+      const t = targets[ti];
+      const cap = t.maxAssigned ?? monsters.length;
+      if ((targetUsage[t.id] || 0) >= cap) continue;
+      const dynCost = computeMonsterAssignmentCost(m, t, { pressureByPlayer, targetUsage });
+      if (!best || dynCost < best.cost) best = { t, cost: dynCost };
+    }
+
+    // Nếu tất cả target đều đầy cap, chọn target rẻ nhất bỏ qua cap để không null assignment.
+    if (!best) {
+      for (let ti = 0; ti < targets.length; ti++) {
+        const t = targets[ti];
+        const dynCost = computeMonsterAssignmentCost(m, t, { pressureByPlayer, targetUsage });
+        if (!best || dynCost < best.cost) best = { t, cost: dynCost };
+      }
+    }
+
+    if (best) {
+      assignments[mi] = best.t;
+      targetUsage[best.t.id] = (targetUsage[best.t.id] || 0) + 1;
+      if (best.t.playerIdx != null) pressureByPlayer[best.t.playerIdx] = (pressureByPlayer[best.t.playerIdx] || 0) + 1;
+      byMonster.push({
+        monster: mi,
+        targetId: best.t.id,
+        kind: best.t.kind,
+        playerIdx: best.t.playerIdx,
+        x: best.t.x,
+        y: best.t.y,
+        cost: +best.cost.toFixed(2),
+      });
+    }
+  }
+
+  GS.monsterAssignDebug = {
+    algorithm: 'heuristic-greedy-v2',
+    note: 'Cost matrix + dynamic fairness penalty + capacity constraints (not Hungarian).',
+    tick: Date.now(),
+    targets,
+    matrix,
+    byMonster,
+    pressureByPlayer,
+    targetUsage,
+  };
+  return assignments;
+}
+
+function monsterAssignmentReport() {
+  const d = GS.monsterAssignDebug;
+  if (!d) {
+    console.warn('[MonsterAssign] Chua co du lieu assignment.');
+    return null;
+  }
+  const rows = d.byMonster.map(r => ({
+    monster: `M${r.monster + 1}`,
+    target: `${r.kind}:${r.targetId}`,
+    player: r.playerIdx != null ? `P${r.playerIdx + 1}` : '--',
+    pos: `(${r.x},${r.y})`,
+    cost: r.cost,
+  }));
+  console.log('[MonsterAssign] Algorithm:', d.algorithm);
+  console.log('[MonsterAssign] Note:', d.note || '--');
+  console.table(rows);
+  console.log('[MonsterAssign] Pressure by player:', d.pressureByPlayer);
+  return {
+    algorithm: d.algorithm,
+    note: d.note,
+    pressureByPlayer: { ...d.pressureByPlayer },
+    targetUsage: { ...d.targetUsage },
+    byMonster: rows,
+    matrix: d.matrix,
+  };
 }
 
 /* ================================================================
@@ -2144,6 +2350,7 @@ const GS = {
   cspLog: [],           // log CSP solver để debug
   cspConstraints: null, // ràng buộc CSP ván hiện tại
   cspStats: null,       // {timeMs, attempts[3], backtracks[3], fairness[], fairnessStd}
+  monsterAssignDebug: null,
   cpuDebug: {           // debug dữ liệu FSM + Utility AI của CPU
     state: '--',
     target: null,
@@ -2686,10 +2893,24 @@ function moveMonsters() {
     let tx = m.x, ty = m.y;
 
     const assignedTarget = assignments[mi];
+    m.assignedTarget = assignedTarget ? {
+      id: assignedTarget.id,
+      kind: assignedTarget.kind,
+      playerIdx: assignedTarget.playerIdx,
+      cost: GS.monsterAssignDebug?.byMonster?.find(x => x.monster === mi)?.cost ?? null,
+    } : null;
 
-    // ── Tính khoảng cách Manhattan đến target được phân công ──
-    const distToTarget = assignedTarget
-      ? Math.abs(m.x - assignedTarget.x) + Math.abs(m.y - assignedTarget.y)
+    // ── Resolve target động: nếu target là player/holder thì dùng vị trí hiện tại của player đó ──
+    let resolvedTarget = assignedTarget;
+    if (assignedTarget && assignedTarget.playerIdx != null && (assignedTarget.kind === 'player' || assignedTarget.kind === 'holder')) {
+      const liveP = alivePlayers.find(p => p.idx === assignedTarget.playerIdx);
+      if (liveP) {
+        resolvedTarget = { ...assignedTarget, x: liveP.x, y: liveP.y, hasTreasure: !!liveP.has };
+      }
+    }
+
+    const distToTarget = resolvedTarget
+      ? Math.abs(m.x - resolvedTarget.x) + Math.abs(m.y - resolvedTarget.y)
       : Infinity;
 
     // ── Kiểm tra có người chơi nào trong bán kính CHASE_RADIUS không ──
@@ -2716,6 +2937,24 @@ function moveMonsters() {
       } else {
         // 10% ngẫu nhiên để không bị đoán hoàn toàn
         const d = dirs[0]; tx = m.x + d[0]; ty = m.y + d[1];
+      }
+    } else if (resolvedTarget) {
+      // ── CHẾ ĐỘ ASSIGNED: bám target đã phân công (player/holder/choke/defense) bằng BFS ──
+      const chaseProb = resolvedTarget.kind === 'holder'
+        ? 0.92
+        : (resolvedTarget.kind === 'player' ? (distToTarget <= MONSTER_CHASE_RADIUS + 2 ? 0.86 : 0.7) : 0.76);
+      if (Math.random() < chaseProb) {
+        const path = bfs(GS.grid, m.x, m.y, resolvedTarget.x, resolvedTarget.y, CFG.W, CFG.H);
+        if (path && path.length) {
+          tx = m.x + path[0].dx;
+          ty = m.y + path[0].dy;
+        } else {
+          const d = dirs[0];
+          tx = m.x + d[0]; ty = m.y + d[1];
+        }
+      } else {
+        const d = dirs[0];
+        tx = m.x + d[0]; ty = m.y + d[1];
       }
     } else {
       // ── CHẾ ĐỘ TUẦN TRA: không có ai gần → di chuyển ngẫu nhiên có định hướng ──
@@ -3276,9 +3515,22 @@ function decideCpuState(cpu) {
 }
 
 function selectCpuTarget(cpu, state) {
-  const bb = cpu.ai.blackboard;
+  const ai = cpu.ai || (cpu.ai = { blackboard: {} });
+  const bb = ai.blackboard;
   const base = bb.base;
   let target = null;
+  const now = Date.now();
+
+  // Giảm rung lắc target giữa các tick liên tiếp gây vòng lặp đường đi.
+  const lock = ai.targetLock;
+  if (lock && lock.state === state && now < lock.until && lock.target) {
+    const reached = cpu.x === lock.target.x && cpu.y === lock.target.y;
+    if (!reached) {
+      GS.cpuDebug.target = { x: lock.target.x, y: lock.target.y };
+      return { x: lock.target.x, y: lock.target.y };
+    }
+  }
+
   switch (state) {
     case CPU_STATES.RETURN_BASE:
       target = { x: base.x, y: base.y };
@@ -3314,6 +3566,13 @@ function selectCpuTarget(cpu, state) {
     default:
       GS.cpuDebug.chokeTarget = null;
       break;
+  }
+  if (target) {
+    ai.targetLock = {
+      state,
+      target: { x: target.x, y: target.y },
+      until: now + (GS.cpuDiff === 'hard' ? 1100 : 800),
+    };
   }
   GS.cpuDebug.target = target;
   return target;
@@ -3691,8 +3950,14 @@ function executeCpuAction(cpu, state, target) {
         GS.cpuDebug.reason += ' | minimax=wait->fallback';
       }
       if (typeof mm.action.dx === 'number' && typeof mm.action.dy === 'number') {
+        const ai = cpu.ai || (cpu.ai = { blackboard: {} });
+        const lm = ai.lastMoveDir;
+        const isReverse = !!lm && mm.action.dx === -lm.dx && mm.action.dy === -lm.dy;
+        const enemyNear = Math.abs(cpu.x - enemy.x) + Math.abs(cpu.y - enemy.y) <= 2;
+        if (isReverse && !enemyNear && !cpu.has) {
+          GS.cpuDebug.reason += ' | minimax=reverse-skip';
+        } else
         if (doMovePlayer(cpu.idx, mm.action.dx, mm.action.dy)) {
-          const ai = cpu.ai || (cpu.ai = { blackboard: {} });
           ai.holdWaitCount = 0;
           GS.cpuDebug.reason += ` | minimax=${mm.action.type}`;
           return;
@@ -3726,21 +3991,41 @@ function executeCpuAction(cpu, state, target) {
     if (pick && doMovePlayer(cpu.idx, pick[0], pick[1])) return;
   }
 
+  const ai = cpu.ai || (cpu.ai = { blackboard: {} });
+  const recent = ai.recentPos || [];
+  const recentCount = (x, y, lastN = 8) => {
+    const tail = recent.slice(-lastN);
+    let c = 0;
+    for (const p of tail) if (p.x === x && p.y === y) c++;
+    return c;
+  };
+  const isHardReverse = (dx, dy) => {
+    const lm = ai.lastMoveDir;
+    return !!lm && dx === -lm.dx && dy === -lm.dy;
+  };
+
   if (path && path.length) {
     let stepDx = path[0].dx, stepDy = path[0].dy;
     let nx = cpu.x + stepDx, ny = cpu.y + stepDy;
-    const ai = cpu.ai || (cpu.ai = { blackboard: {} });
 
     // Anti-loop: tránh đi qua lại 2 ô liên tục nếu vẫn còn lựa chọn tốt khác.
     const loopBack = ai.prev2Pos && nx === ai.prev2Pos.x && ny === ai.prev2Pos.y;
-    if (loopBack) {
+    const revisit = recentCount(nx, ny, 8);
+    const reverseStep = isHardReverse(stepDx, stepDy);
+    if (loopBack || revisit >= 2 || reverseStep) {
       const candidates = neighbors4(cpu.x, cpu.y, CFG.W, CFG.H)
         .filter(n => GS.grid[n.y * CFG.W + n.x] !== CFG.T_WALL)
         .filter(n => !(ai.prev2Pos && n.x === ai.prev2Pos.x && n.y === ai.prev2Pos.y));
       let bestAlt = null, bestAltScore = -1e9;
       for (const c of candidates) {
         const avoidPenalty = shouldAvoidCell(cpu, c.x, c.y) ? 12 : 0;
-        const sc = scoreCellByInfluence(cpu, c.x, c.y) - avoidPenalty - (Math.abs(c.x - target.x) + Math.abs(c.y - target.y)) * 0.9;
+        const revisitPenalty = recentCount(c.x, c.y, 8) * 8;
+        const revPenalty = isHardReverse(c.x - cpu.x, c.y - cpu.y) ? 6 : 0;
+        const sc = scoreCellByInfluence(cpu, c.x, c.y)
+          - avoidPenalty
+          - revisitPenalty
+          - revPenalty
+          - (Math.abs(c.x - target.x) + Math.abs(c.y - target.y)) * 0.9;
         if (sc > bestAltScore) { bestAltScore = sc; bestAlt = c; }
       }
       if (bestAlt) {
@@ -3748,7 +4033,7 @@ function executeCpuAction(cpu, state, target) {
         stepDy = bestAlt.y - cpu.y;
         nx = bestAlt.x;
         ny = bestAlt.y;
-        GS.cpuDebug.reason += ' | antiLoop=reroute';
+        GS.cpuDebug.reason += ' | antiLoop=rerouteHist';
       }
     }
 
@@ -3782,12 +4067,16 @@ function executeCpuAction(cpu, state, target) {
   }
 
   const dirs = shuffle([[1,0],[-1,0],[0,1],[0,-1]]);
-  const step = dirs.find(([dx,dy]) => {
-    const nx = cpu.x + dx, ny = cpu.y + dy;
-    return nx>=0&&nx<CFG.W&&ny>=0&&ny<CFG.H&&GS.grid[ny*CFG.W+nx]!==CFG.T_WALL;
-  });
+  const step = dirs
+    .map(([dx,dy]) => ({ dx, dy, nx: cpu.x + dx, ny: cpu.y + dy }))
+    .filter(s => s.nx>=0&&s.nx<CFG.W&&s.ny>=0&&s.ny<CFG.H&&GS.grid[s.ny*CFG.W+s.nx]!==CFG.T_WALL)
+    .sort((a,b) => {
+      const sa = recentCount(a.nx, a.ny, 8) + (isHardReverse(a.dx, a.dy) ? 2 : 0);
+      const sb = recentCount(b.nx, b.ny, 8) + (isHardReverse(b.dx, b.dy) ? 2 : 0);
+      return sa - sb;
+    })[0];
   if (step) {
-    if (doMovePlayer(cpu.idx, step[0], step[1])) {
+    if (doMovePlayer(cpu.idx, step.dx, step.dy)) {
       GS.cpuDebug.reason += ' | fallback=random';
       return;
     }
@@ -3845,6 +4134,13 @@ function doMovePlayer(pidx, dx, dy) {
     const ai = p.ai || (p.ai = { blackboard: {} });
     ai.prev2Pos = ai.prevPos ? { ...ai.prevPos } : { x: ox, y: oy };
     ai.prevPos = { x: ox, y: oy };
+    ai.lastMoveDir = { dx, dy };
+    ai.recentPos = ai.recentPos || [];
+    ai.recentPos.push({ x: nx, y: ny });
+    if (ai.recentPos.length > 12) ai.recentPos.shift();
+    if (ai.targetLock && ai.targetLock.target && ai.targetLock.target.x === nx && ai.targetLock.target.y === ny) {
+      ai.targetLock = null;
+    }
   }
   resolveMove(pidx);
   return true;
@@ -4404,6 +4700,8 @@ function updateDebugPanel(){
   const reasonEl = document.getElementById('dbg-cpu-reason');
   const mmEl = document.getElementById('dbg-cpu-minimax');
   const utilEl = document.getElementById('dbg-cpu-utils');
+  const monAssignEl = document.getElementById('dbg-mon-assign');
+  const monPressureEl = document.getElementById('dbg-mon-pressure');
   if(stateEl) stateEl.textContent = `State: ${cd.state || '--'} | Diff: ${GS.cpuDiff}`;
   if(targetEl) {
     const t = cd.target;
@@ -4442,6 +4740,23 @@ function updateDebugPanel(){
     const u = cd.utility || {};
     const keys = ['seekTreasure','returnBase','chaseHolder','ambush','evadeDanger','setTrap','recover'];
     utilEl.innerHTML = keys.map(k => `<div>${k}: ${u[k] ?? '--'}</div>`).join('');
+  }
+  if (monAssignEl || monPressureEl) {
+    const mad = GS.monsterAssignDebug;
+    if (mad && Array.isArray(mad.byMonster)) {
+      const list = mad.byMonster
+        .slice(0, 8)
+        .map(r => `M${r.monster+1}->${r.kind}${r.playerIdx != null ? `(P${r.playerIdx+1})` : ''} c=${r.cost}`)
+        .join(' | ');
+      if (monAssignEl) monAssignEl.textContent = `Monster assign: ${list || '--'}`;
+      const pText = Object.entries(mad.pressureByPlayer || {})
+        .map(([k,v]) => `P${Number(k)+1}:${v}`)
+        .join(' ');
+      if (monPressureEl) monPressureEl.textContent = `Monster pressure: ${pText || '--'} | algo=${mad.algorithm || '--'}`;
+    } else {
+      if (monAssignEl) monAssignEl.textContent = 'Monster assign: --';
+      if (monPressureEl) monPressureEl.textContent = 'Monster pressure: --';
+    }
   }
 }
 function toggleGraphColoring(){
