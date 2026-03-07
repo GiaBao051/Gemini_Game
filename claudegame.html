@@ -360,6 +360,9 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
   <div style="margin-top:6px;border-top:1px solid #6af4;padding-top:6px;color:#9cf;">🤖 CPU AI</div>
   <div id="dbg-cpu-state" style="font-size:.68rem;">State: --</div>
   <div id="dbg-cpu-target" style="font-size:.68rem;">Target: --</div>
+  <div id="dbg-choke-stats" style="font-size:.65rem;color:#bfe;">Chokes: --</div>
+  <div id="dbg-choke-top" style="font-size:.65rem;color:#9fd;">Top choke: --</div>
+  <div id="dbg-choke-cpu" style="font-size:.65rem;color:#8ef;">CPU choke target: --</div>
   <div id="dbg-cpu-reason" style="font-size:.65rem;color:#cef;">Reason: --</div>
   <div id="dbg-cpu-minimax" style="font-size:.65rem;color:#9fe;">Minimax: --</div>
   <div id="dbg-cpu-utils" style="max-height:90px;overflow-y:auto;font-size:.63rem;color:#bdf;">Utility: --</div>
@@ -517,6 +520,36 @@ function bfs(grid, sx,sy, tx,ty, W,H) {
       prev[ni]=cur;
       q.push(ni);
     }
+  }
+
+  // Overlay choke points: chỉ vẽ khi bật debug panel để tránh rối màn hình.
+  if (debugOn && CHOKE_CACHE.points.length) {
+    ctx.save();
+    const topN = Math.min(28, CHOKE_CACHE.points.length);
+    for (let i = 0; i < topN; i++) {
+      const cp = CHOKE_CACHE.points[i];
+      const px = cp.x * T + T / 2, py = cp.y * T + T / 2;
+      const alpha = i < 8 ? 0.32 : 0.16;
+      ctx.fillStyle = `rgba(80,220,255,${alpha})`;
+      ctx.beginPath();
+      ctx.arc(px, py, i < 8 ? T * 0.26 : T * 0.2, 0, Math.PI * 2);
+      ctx.fill();
+      if (i < 5) {
+        ctx.strokeStyle = 'rgba(160,255,255,0.75)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
+    const tgt = GS.cpuDebug?.chokeTarget;
+    if (tgt && tgt.x != null && tgt.y != null) {
+      const tx = tgt.x * T + T / 2, ty = tgt.y * T + T / 2;
+      ctx.strokeStyle = 'rgba(255,220,120,0.95)';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.arc(tx, ty, T * 0.42, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
   return null; // không thể đến
 }
@@ -995,7 +1028,7 @@ function dijkstraSafe(grid, sx, sy, tx, ty, W, H, costMode = 'safe', actorIdx = 
       // Quiz cell: tốn thêm 3 (sẽ mất thời gian trả lời quiz)
       if (grid[ni] === CFG.T_QUIZ) cellCost += 3;
       // Choke point kiểm soát bởi đối thủ: tránh hơn khi 'safe'
-      if (costMode === 'safe' && CHOKE_CACHE.points.some(cp => cp.x === nx && cp.y === ny))
+      if (costMode === 'safe' && isCellChokePoint(nx, ny))
         cellCost += 4;
       const ng = dist[cur] + cellCost;
       if (ng < dist[ni]) {
@@ -1110,6 +1143,8 @@ function getCellOpportunity(x, y) {
 const CHOKE_CACHE = {
   points:   [],      // [{x,y,rank}] xếp hạng chiến lược
   bridges:  [],      // [{x1,y1,x2,y2}]
+  pointSet: new Set(),
+  pointMap: new Map(),
   lastSeed: -1,
 };
 
@@ -1253,7 +1288,77 @@ function updateChokeCache() {
   if (!GS.grid || CHOKE_CACHE.lastSeed === GS.seed) return;
   CHOKE_CACHE.points   = rankChokePoints(GS.grid, CFG.W, CFG.H);
   CHOKE_CACHE.bridges  = findBridges(GS.grid, CFG.W, CFG.H);
+  CHOKE_CACHE.pointSet = new Set(CHOKE_CACHE.points.map(p => `${p.x},${p.y}`));
+  CHOKE_CACHE.pointMap = new Map(CHOKE_CACHE.points.map(p => [`${p.x},${p.y}`, p]));
   CHOKE_CACHE.lastSeed = GS.seed;
+}
+
+function isCellChokePoint(x, y) {
+  return CHOKE_CACHE.pointSet.has(`${x},${y}`);
+}
+
+function cpuCellDist(cpu, x, y) {
+  const dm = cpu?.ai?.blackboard?.cpuDistMap;
+  if (dm) {
+    const d = dm[y * CFG.W + x];
+    return d >= 0 ? d : 9999;
+  }
+  return Math.abs(cpu.x - x) + Math.abs(cpu.y - y);
+}
+
+function getNearestChokePoint(x, y) {
+  if (!CHOKE_CACHE.points.length) return null;
+  let best = null, bestCost = 1e9;
+  for (const cp of CHOKE_CACHE.points) {
+    const d = Math.abs(cp.x - x) + Math.abs(cp.y - y);
+    const cost = d - cp.rank * 0.015;
+    if (cost < bestCost) { bestCost = cost; best = cp; }
+  }
+  return best;
+}
+
+function scoreChokeForAmbush(cpu, choke) {
+  if (!cpu || !choke) return -1e9;
+  const holder = GS.treasureHolder >= 0 ? GS.players[GS.treasureHolder] : null;
+  const enemyHolder = holder && holder.idx !== cpu.idx ? holder : null;
+  const dCpu = cpuCellDist(cpu, choke.x, choke.y);
+  if (dCpu >= 9999) return -1e9;
+
+  let score = Math.min(65, choke.rank * 0.25);
+  score += Math.max(0, 18 - dCpu * 1.8);
+  score -= getCellDanger(choke.x, choke.y) * 1.7;
+
+  if (enemyHolder) {
+    const eb = CFG.PLAYER_BASES[enemyHolder.idx];
+    const route = predictHolderRoute(enemyHolder, eb);
+    const ridx = route.findIndex(p => p.x === choke.x && p.y === choke.y);
+    if (ridx >= 0) score += Math.max(14, 48 - ridx * 4);
+  }
+
+  if (GS.treasure) {
+    const dTre = Math.abs(choke.x - GS.treasure.x) + Math.abs(choke.y - GS.treasure.y);
+    if (dTre <= 5) score += 14 - dTre * 2;
+  }
+  return +score.toFixed(2);
+}
+
+function scoreChokeForDefense(cpu, choke) {
+  if (!cpu || !choke) return -1e9;
+  const base = CFG.PLAYER_BASES[cpu.idx];
+  const dBase = Math.abs(choke.x - base.x) + Math.abs(choke.y - base.y);
+  const dCpu = cpuCellDist(cpu, choke.x, choke.y);
+  if (dCpu >= 9999) return -1e9;
+
+  let score = 0;
+  score += Math.min(48, choke.rank * 0.17);
+  if (dBase >= 2 && dBase <= 8) score += 30 - Math.abs(5 - dBase) * 4;
+  else score -= Math.max(0, dBase - 8) * 2.5;
+
+  score += Math.max(0, 16 - dCpu * 1.4);
+  score -= getCellDanger(choke.x, choke.y) * 2;
+  if (nearestMonsterDist(choke.x, choke.y) <= 1) score -= 16;
+  if (CFG.PLAYER_BASES.some(b => Math.abs(b.x - choke.x) + Math.abs(b.y - choke.y) <= 1)) score -= 28;
+  return +score.toFixed(2);
 }
 
 /* ================================================================
@@ -1719,6 +1824,7 @@ const GS = {
   cpuDebug: {           // debug dữ liệu FSM + Utility AI của CPU
     state: '--',
     target: null,
+    chokeTarget: null,
     reason: '--',
     utility: {},
     minimax: { on:false, depth:0, action:'--', score:0 },
@@ -1757,6 +1863,7 @@ function makeTrap(owner, x, y) {
 function initRound(seed, playersData, keepScore=false) {
   GS.seed = seed || (Date.now() & 0xFFFFFF);
   GS.grid = generateMaze(CFG.W, CFG.H, GS.seed, GS.round);
+  updateChokeCache();
   GS.treasureHolder = -1;
   GS.traps = [];
   GS.running = true;
@@ -1916,6 +2023,7 @@ function regenerateMap() {
   // Seed mới hoàn toàn ngẫu nhiên
   GS.seed = (Date.now() ^ (Math.random()*0xFFFFFF|0)) & 0xFFFFFF;
   GS.grid = generateMaze(CFG.W, CFG.H, GS.seed, GS.round);
+  updateChokeCache();
 
   // Graph coloring trên map mới
   GS.gcResult = applyGraphColoring(GS.grid, CFG.W, CFG.H);
@@ -2281,9 +2389,8 @@ function moveMonsters() {
       // ── CHẾ ĐỘ TUẦN TRA: không có ai gần → di chuyển ngẫu nhiên có định hướng ──
       // Nếu quái có patrol point thì hướng về đó, còn không thì random
       if(!m.patrolTarget || (m.x === m.patrolTarget.x && m.y === m.patrolTarget.y)){
-        // Chọn patrol point mới: ô floor ngẫu nhiên trong vùng quái đang ở
-        // (không đi quá xa spawn zone ban đầu để giữ phân tán đều)
-        m.patrolTarget = pickPatrolPoint(m, GS.grid, CFG.W, CFG.H);
+        // Ưu tiên choke point để tạo áp lực vùng hẹp, fallback về patrol ngẫu nhiên.
+        m.patrolTarget = pickMonsterChokePatrol(m, assignedTarget) || pickPatrolPoint(m, GS.grid, CFG.W, CFG.H);
       }
       if(m.patrolTarget && Math.random() < 0.6){
         const path = bfs(GS.grid, m.x, m.y, m.patrolTarget.x, m.patrolTarget.y, CFG.W, CFG.H);
@@ -2332,6 +2439,20 @@ function pickPatrolPoint(monster, grid, W, H) {
   }
   if(!candidates.length) return null;
   return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+function pickMonsterChokePatrol(monster, assignedTarget) {
+  if (!CHOKE_CACHE.points.length) return null;
+  let best = null, bestScore = -1e9;
+  for (const cp of CHOKE_CACHE.points.slice(0, 16)) {
+    const dMon = Math.abs(cp.x - monster.x) + Math.abs(cp.y - monster.y);
+    if (dMon > 14) continue;
+    const dTgt = assignedTarget ? Math.abs(cp.x - assignedTarget.x) + Math.abs(cp.y - assignedTarget.y) : 6;
+    const holderBonus = assignedTarget && assignedTarget.has ? 16 : 0;
+    const score = cp.rank * 0.2 + Math.max(0, 12 - dMon) * 1.5 + Math.max(0, 8 - dTgt) * 2 + holderBonus - getCellDanger(cp.x, cp.y) * 0.8;
+    if (score > bestScore) { bestScore = score; best = { x: cp.x, y: cp.y }; }
+  }
+  return best;
 }
 
 /* ================================================================
@@ -2439,6 +2560,37 @@ function chooseSafestNearbyCell(cpu, radius = 4) {
   return best;
 }
 
+function chooseSafestNearbyCellAvoidChoke(cpu, radius = 4) {
+  let best = null, bestScore = -1e9;
+  for (let y = Math.max(1, cpu.y - radius); y <= Math.min(CFG.H - 2, cpu.y + radius); y++) {
+    for (let x = Math.max(1, cpu.x - radius); x <= Math.min(CFG.W - 2, cpu.x + radius); x++) {
+      if (GS.grid[y * CFG.W + x] === CFG.T_WALL) continue;
+      const dCpu = Math.abs(x - cpu.x) + Math.abs(y - cpu.y);
+      if (dCpu === 0) continue;
+      const chokePenalty = isCellChokePoint(x, y) ? 15 : 0;
+      const score =
+        (getCellOpportunity(x, y) * 1.2)
+        - (getCellDanger(x, y) * 2.5)
+        - chokePenalty
+        - (nearestMonsterDist(x, y) <= 1 ? 22 : 0)
+        - (nearestTrapDist(cpu, x, y) <= 1 ? 15 : 0)
+        - dCpu * 0.4;
+      if (score > bestScore) { bestScore = score; best = { x, y }; }
+    }
+  }
+  return best;
+}
+
+function getBestChokeForCpu(cpu, scorer, limit = 18) {
+  if (!cpu || !CHOKE_CACHE.points.length) return null;
+  let best = null;
+  for (const cp of CHOKE_CACHE.points.slice(0, limit)) {
+    const s = scorer(cpu, cp);
+    if (!best || s > best.score) best = { x: cp.x, y: cp.y, rank: cp.rank, score: s };
+  }
+  return best;
+}
+
 function predictHolderRoute(holder, targetBase) {
   if (!holder || !targetBase) return [];
   const path = bfs(GS.grid, holder.x, holder.y, targetBase.x, targetBase.y, CFG.W, CFG.H);
@@ -2460,14 +2612,16 @@ function evaluateTrapCell(cpu, x, y) {
   if (GS.traps.some(t => t.x === x && t.y === y)) return { score: -1e9, reasons:['occupied'] };
 
   const cpuBase = CFG.PLAYER_BASES[cpu.idx];
-  const dCpu = pathLenSafe(cpu.x, cpu.y, x, y);
+  const dCpu = cpuCellDist(cpu, x, y);
   if (dCpu >= 9999) return { score: -1e9, reasons:['unreachable'] };
 
   let score = 0;
 
-  const choke = CHOKE_CACHE.points.find(cp => cp.x === x && cp.y === y);
+  const choke = CHOKE_CACHE.pointMap.get(`${x},${y}`) || null;
   if (choke) {
-    const s = Math.min(48, 10 + choke.rank * 0.18);
+    const ambS = scoreChokeForAmbush(cpu, choke) * 0.35;
+    const defS = scoreChokeForDefense(cpu, choke) * 0.45;
+    const s = Math.min(64, 12 + choke.rank * 0.12 + ambS + defS);
     score += s; reasons.push(`choke+${s.toFixed(0)}`);
   }
 
@@ -2626,6 +2780,7 @@ function updateCpuBlackboard(cpu) {
   bb.enemyHolder = enemyHolder;
   bb.holder = holder;
   bb.dangerAtCpu = +getCellDanger(cpu.x, cpu.y).toFixed(2);
+  bb.cpuDistMap = bfsDistanceMap(GS.grid, cpu.x, cpu.y, CFG.W, CFG.H);
   bb.nearMonster = nearestMonsterDist(cpu.x, cpu.y);
   bb.nearTrap = nearestTrapDist(cpu, cpu.x, cpu.y);
   bb.baseDist = pathLenSafe(cpu.x, cpu.y, base.x, base.y);
@@ -2634,27 +2789,13 @@ function updateCpuBlackboard(cpu) {
   bb.recovering = now < cpu.ai.recoverUntil;
 
   bb.holderPathToBase = null;
-  bb.bestAmbush = null;
   if (enemyHolder) {
     const hb = CFG.PLAYER_BASES[enemyHolder.idx];
-    const hPath = bfs(GS.grid, enemyHolder.x, enemyHolder.y, hb.x, hb.y, CFG.W, CFG.H);
-    bb.holderPathToBase = hPath;
-    let best = null, bestCost = 1e9;
-    if (hPath && hPath.length) {
-      let px = enemyHolder.x, py = enemyHolder.y;
-      for (let i = 0; i < hPath.length; i++) {
-        px += hPath[i].dx; py += hPath[i].dy;
-        const cp = CHOKE_CACHE.points.find(c => c.x === px && c.y === py);
-        if (!cp) continue;
-        const cDist = pathLenSafe(cpu.x, cpu.y, px, py);
-        const cost = cDist - cp.rank * 0.1 + i * 0.2;
-        if (cost < bestCost) { bestCost = cost; best = { x: px, y: py, rank: cp.rank }; }
-      }
-    }
-    bb.bestAmbush = best || CHOKE_CACHE.points[0] || null;
+    bb.holderPathToBase = predictHolderRoute(enemyHolder, hb);
   }
-
-  bb.bestTrapPoint = bb.bestAmbush || CHOKE_CACHE.points[0] || null;
+  bb.bestAmbush = getBestChokeForCpu(cpu, scoreChokeForAmbush, 20) || getNearestChokePoint(cpu.x, cpu.y);
+  bb.bestDefenseChoke = getBestChokeForCpu(cpu, scoreChokeForDefense, 20) || bb.bestAmbush;
+  bb.bestTrapPoint = bb.bestDefenseChoke || bb.bestAmbush || CHOKE_CACHE.points[0] || null;
   return bb;
 }
 
@@ -2790,17 +2931,26 @@ function selectCpuTarget(cpu, state) {
       break;
     case CPU_STATES.AMBUSH:
       target = bb.bestAmbush ? { x: bb.bestAmbush.x, y: bb.bestAmbush.y } : (bb.enemyHolder ? { x: bb.enemyHolder.x, y: bb.enemyHolder.y } : bb.treasure);
+      GS.cpuDebug.chokeTarget = bb.bestAmbush || null;
       break;
     case CPU_STATES.EVADE_DANGER:
+      target = chooseSafestNearbyCellAvoidChoke(cpu, 4) || chooseSafestNearbyCell(cpu, 4) || { x: base.x, y: base.y };
+      GS.cpuDebug.chokeTarget = null;
+      break;
     case CPU_STATES.RECOVER:
-      target = chooseSafestNearbyCell(cpu, state === CPU_STATES.RECOVER ? 5 : 4) || { x: base.x, y: base.y };
+      target = chooseSafestNearbyCellAvoidChoke(cpu, 5) || chooseSafestNearbyCell(cpu, 5) || { x: base.x, y: base.y };
+      GS.cpuDebug.chokeTarget = null;
       break;
     case CPU_STATES.SET_TRAP:
       {
         const trapCell = findBestTrapCell(cpu);
         bb.bestTrapCandidate = trapCell;
         target = trapCell ? { x: trapCell.x, y: trapCell.y } : (bb.bestTrapPoint ? { x: bb.bestTrapPoint.x, y: bb.bestTrapPoint.y } : chooseSafestNearbyCell(cpu, 3));
+        GS.cpuDebug.chokeTarget = bb.bestTrapPoint || null;
       }
+      break;
+    default:
+      GS.cpuDebug.chokeTarget = null;
       break;
   }
   GS.cpuDebug.target = target;
@@ -3782,6 +3932,9 @@ function updateDebugPanel(){
   const cpu = GS.players.find(p=>p.isBot);
   const stateEl = document.getElementById('dbg-cpu-state');
   const targetEl = document.getElementById('dbg-cpu-target');
+  const chokeStatsEl = document.getElementById('dbg-choke-stats');
+  const chokeTopEl = document.getElementById('dbg-choke-top');
+  const chokeCpuEl = document.getElementById('dbg-choke-cpu');
   const reasonEl = document.getElementById('dbg-cpu-reason');
   const mmEl = document.getElementById('dbg-cpu-minimax');
   const utilEl = document.getElementById('dbg-cpu-utils');
@@ -3789,6 +3942,15 @@ function updateDebugPanel(){
   if(targetEl) {
     const t = cd.target;
     targetEl.textContent = t ? `Target: (${t.x},${t.y}) | CPU: (${cpu?.x??'-'},${cpu?.y??'-'})` : 'Target: --';
+  }
+  if (chokeStatsEl) chokeStatsEl.textContent = `Chokes: ${CHOKE_CACHE.points.length} | Bridges: ${CHOKE_CACHE.bridges.length}`;
+  if (chokeTopEl) {
+    const top = CHOKE_CACHE.points[0];
+    chokeTopEl.textContent = top ? `Top choke: (${top.x},${top.y}) r=${top.rank}` : 'Top choke: --';
+  }
+  if (chokeCpuEl) {
+    const c = cd.chokeTarget;
+    chokeCpuEl.textContent = c ? `CPU choke target: (${c.x},${c.y}) s=${c.score != null ? c.score : '--'}` : 'CPU choke target: --';
   }
   if(reasonEl) reasonEl.textContent = `Reason: ${cd.reason || '--'}`;
   if(mmEl) {
@@ -4107,6 +4269,7 @@ function handleRegenMap(msg){
   if(!msg.seed) return;
   GS.seed = msg.seed;
   GS.grid = generateMaze(CFG.W, CFG.H, GS.seed, GS.round);
+  updateChokeCache();
   GS.gcResult = applyGraphColoring(GS.grid, CFG.W, CFG.H);
   GS.graphColorMap = GS.gcResult.colorMap;
   const cspRng = mkRng(GS.seed ^ 0xDEAD);
