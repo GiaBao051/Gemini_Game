@@ -462,19 +462,49 @@ function genClientId() {
 function shuffle(arr) { for(let i=arr.length-1;i>0;i--){const j=ri(0,i+1);[arr[i],arr[j]]=[arr[j],arr[i]];} return arr; }
 // Deep clone
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
-// Lấy phần tử nhỏ nhất theo key từ mảng open-list (tránh sort mỗi vòng lặp)
-function popMinBy(arr, key) {
-  if (!arr.length) return null;
-  let bi = 0;
-  let bv = arr[0][key];
-  for (let i = 1; i < arr.length; i++) {
-    const v = arr[i][key];
-    if (v < bv) { bv = v; bi = i; }
+// Binary min-heap dùng cho open-list của A* / UCS / Dijkstra.
+class MinBinaryHeap {
+  constructor(compareFn) {
+    this._arr = [];
+    this._cmp = compareFn || ((a, b) => a - b);
   }
-  const out = arr[bi];
-  arr[bi] = arr[arr.length - 1];
-  arr.pop();
-  return out;
+
+  size() { return this._arr.length; }
+  isEmpty() { return this._arr.length === 0; }
+
+  push(item) {
+    const a = this._arr;
+    a.push(item);
+    let i = a.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (this._cmp(a[i], a[p]) >= 0) break;
+      [a[i], a[p]] = [a[p], a[i]];
+      i = p;
+    }
+  }
+
+  pop() {
+    const a = this._arr;
+    if (!a.length) return null;
+    const min = a[0];
+    const last = a.pop();
+    if (a.length) {
+      a[0] = last;
+      let i = 0;
+      while (true) {
+        const l = i * 2 + 1;
+        const r = l + 1;
+        let m = i;
+        if (l < a.length && this._cmp(a[l], a[m]) < 0) m = l;
+        if (r < a.length && this._cmp(a[r], a[m]) < 0) m = r;
+        if (m === i) break;
+        [a[i], a[m]] = [a[m], a[i]];
+        i = m;
+      }
+    }
+    return min;
+  }
 }
 // Lerp
 function lerp(a,b,t) { return a + (b-a)*t; }
@@ -597,15 +627,16 @@ function drawChokeOverlay() {
 function aStar(grid, sx,sy, tx,ty, W,H) {
   if(sx===tx && sy===ty) return [];
   const heur=(x,y)=>Math.abs(x-tx)+Math.abs(y-ty);
-  const open=[];
+  const open = new MinBinaryHeap((a, b) => (a.f - b.f) || (a.seq - b.seq));
   const gScore=new Float32Array(W*H).fill(Infinity);
   const prev=new Int32Array(W*H).fill(-1);
+  let seq=0;
   const start=sy*W+sx;
   gScore[start]=0;
-  open.push({i:start, f:heur(sx,sy)});
+  open.push({i:start, f:heur(sx,sy), seq:seq++});
   const dx=[1,-1,0,0],dy=[0,0,1,-1];
-  while(open.length) {
-    const best = popMinBy(open, 'f');
+  while(!open.isEmpty()) {
+    const best = open.pop();
     if (!best) break;
     const {i:cur}=best;
     const cx=cur%W, cy=Math.floor(cur/W);
@@ -627,7 +658,7 @@ function aStar(grid, sx,sy, tx,ty, W,H) {
       if(ng<gScore[ni]){
         gScore[ni]=ng;
         prev[ni]=cur;
-        open.push({i:ni, f:ng+heur(nx,ny)});
+        open.push({i:ni, f:ng+heur(nx,ny), seq:seq++});
       }
     }
   }
@@ -967,15 +998,16 @@ function aStarSafe(grid, gcResult, dangerZones, sx,sy, tx,ty, W,H, dangerWeight=
   if (sx===tx && sy===ty) return [];
   const { colorMap } = gcResult;
   const heur = (x,y) => Math.abs(x-tx)+Math.abs(y-ty);
-  const open = [];
+  const open = new MinBinaryHeap((a, b) => (a.f - b.f) || (a.seq - b.seq));
   const gScore = new Float32Array(W*H).fill(Infinity);
   const prev = new Int32Array(W*H).fill(-1);
+  let seq = 0;
   const start = sy*W+sx;
   gScore[start] = 0;
-  open.push({i:start, f:heur(sx,sy)});
+  open.push({i:start, f:heur(sx,sy), seq:seq++});
   const dxs=[1,-1,0,0], dys=[0,0,1,-1];
-  while (open.length) {
-    const best = popMinBy(open, 'f');
+  while (!open.isEmpty()) {
+    const best = open.pop();
     if (!best) break;
     const {i:cur} = best;
     const cx=cur%W, cy=Math.floor(cur/W);
@@ -999,7 +1031,7 @@ function aStarSafe(grid, gcResult, dangerZones, sx,sy, tx,ty, W,H, dangerWeight=
       const ng = gScore[cur] + 1 + zoneCost;
       if (ng < gScore[ni]) {
         gScore[ni]=ng; prev[ni]=cur;
-        open.push({i:ni, f:ng+heur(nx,ny)});
+        open.push({i:ni, f:ng+heur(nx,ny), seq:seq++});
       }
     }
   }
@@ -1034,11 +1066,12 @@ function dijkstraSafe(grid, sx, sy, tx, ty, W, H, costMode = 'safe', actorIdx = 
   const prev = new Int32Array(W * H).fill(-1);
   const start = sy * W + sx;
   dist[start] = 0;
-  // Min-heap đơn giản: sorted array (ổn với maze 41×25 ~1000 node)
-  const open = [{ i: start, g: 0 }];
+  const open = new MinBinaryHeap((a, b) => (a.g - b.g) || (a.seq - b.seq));
+  let seq = 0;
+  open.push({ i: start, g: 0, seq: seq++ });
   const dxs = [1,-1,0,0], dys = [0,0,1,-1];
-  while (open.length) {
-    const best = popMinBy(open, 'g');
+  while (!open.isEmpty()) {
+    const best = open.pop();
     if (!best) break;
     const { i: cur, g: curG } = best;
     if (curG > dist[cur]) continue;
@@ -1082,7 +1115,7 @@ function dijkstraSafe(grid, sx, sy, tx, ty, W, H, costMode = 'safe', actorIdx = 
       const ng = dist[cur] + cellCost;
       if (ng < dist[ni]) {
         dist[ni] = ng; prev[ni] = cur;
-        open.push({ i: ni, g: ng });
+        open.push({ i: ni, g: ng, seq: seq++ });
       }
     }
   }
@@ -3731,14 +3764,15 @@ function aStarMonsterAware(grid, monsters, sx, sy, tx, ty, W, H) {
   const INF    = 1e9;
   const gScore = new Float32Array(W * H).fill(INF);
   const prev   = new Int32Array(W * H).fill(-1);
-  const open   = [];
+  const open   = new MinBinaryHeap((a, b) => (a.f - b.f) || (a.seq - b.seq));
   const start  = sy * W + sx;
+  let seq = 0;
   gScore[start] = 0;
-  open.push({ i: start, f: heur(sx, sy) });
+  open.push({ i: start, f: heur(sx, sy), seq: seq++ });
   const dxs = [1,-1,0,0], dys = [0,0,1,-1];
 
-  while (open.length) {
-    const best = popMinBy(open, 'f');
+  while (!open.isEmpty()) {
+    const best = open.pop();
     if (!best) break;
     const { i: cur } = best;
     if (gScore[cur] === INF) continue;
@@ -3763,7 +3797,7 @@ function aStarMonsterAware(grid, monsters, sx, sy, tx, ty, W, H) {
       const ng = gScore[cur] + 1 + penalty;
       if (ng < gScore[ni]) {
         gScore[ni] = ng; prev[ni] = cur;
-        open.push({ i: ni, f: ng + heur(nx, ny) });
+        open.push({ i: ni, f: ng + heur(nx, ny), seq: seq++ });
       }
     }
   }
