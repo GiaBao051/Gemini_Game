@@ -396,6 +396,10 @@ const CFG = {
   PLAYER_GRACE_ROUND_START_MS: 2200,
   PLAYER_GRACE_MONSTER_HIT_MS: 1800,
   PLAYER_GRACE_REGEN_MS: 1300,
+  CSP_MAX_FALLBACK_BEFORE_REROLL: 2,
+  CSP_MAX_REROLL_ATTEMPTS: 3,
+  CSP_MAX_FAIRNESS_STD_BEFORE_REROLL: 5.6,
+  CSP_MIN_MAP_QUALITY_SCORE: 61,
   TRAP_LIMIT: 3,                 // số bẫy tối đa mỗi người
   TRAP_TTL: 12000,               // thời gian sống của bẫy (ms)
   ROUND_END_DELAY: 3500,         // ms chờ sau khi thắng ván
@@ -2991,6 +2995,7 @@ const GS = {
   cspLog: [],           // log CSP solver để debug
   cspConstraints: null, // ràng buộc CSP ván hiện tại
   cspStats: null,       // {timeMs, attempts[3], backtracks[3], fairness[], fairnessStd}
+  cspLayoutMeta: null,
   monsterAssignDebug: null,
   optimizerDebug: null,
   cpuDebug: {           // debug dữ liệu FSM + Utility AI của CPU
@@ -3054,13 +3059,166 @@ function updateCspFairnessStats(numPlayers) {
   GS.cspLog.push(`📐 Fairness BFS: ${fairness.map(f=>`P${f.idx+1}:${f.dist<0?'∞':f.dist}`).join(' ')} σ=${fStd}`);
 }
 
+function evaluateGeneratedMapQuality(grid, cspResult, numPlayers, W, H) {
+  const bases = CFG.PLAYER_BASES.slice(0, numPlayers);
+  const out = {
+    score: 0,
+    fallbackCount: cspResult?.stats?.fallbackCount ?? 0,
+    fairnessStd: 999,
+    fairnessLead: 999,
+    fairnessDistances: [],
+    floorRatio: 0,
+    avgDegree: 0,
+    monsterSpreadMin: 0,
+  };
+  if (!grid || !cspResult || !cspResult.treasure) return out;
+
+  const tre = cspResult.treasure;
+  const bfsFair = [];
+  for (let i = 0; i < bases.length; i++) {
+    const b = bases[i];
+    const path = bfs(grid, b.x, b.y, tre.x, tre.y, W, H);
+    bfsFair.push({ idx: i, dist: path ? path.length : -1 });
+  }
+  out.fairnessDistances = bfsFair;
+  const reachable = bfsFair.filter(f => f.dist > 0).map(f => f.dist);
+  if (reachable.length >= 2) {
+    const avg = reachable.reduce((a, b) => a + b, 0) / reachable.length;
+    const std = Math.sqrt(reachable.reduce((a, v) => a + (v - avg) ** 2, 0) / reachable.length);
+    const sorted = reachable.slice().sort((a, b) => a - b);
+    out.fairnessStd = +std.toFixed(2);
+    out.fairnessLead = sorted[1] - sorted[0];
+  }
+
+  let floor = 0;
+  let degreeSum = 0;
+  for (let y = 1; y < H - 1; y++) {
+    for (let x = 1; x < W - 1; x++) {
+      if (grid[y * W + x] === CFG.T_WALL) continue;
+      floor++;
+      degreeSum += neighbors4(x, y, W, H).filter(n => grid[n.y * W + n.x] !== CFG.T_WALL).length;
+    }
+  }
+  out.floorRatio = floor / ((W - 2) * (H - 2));
+  out.avgDegree = floor ? degreeSum / floor : 0;
+
+  const mons = cspResult.monsters || [];
+  let monMin = mons.length > 1 ? 999 : 6;
+  for (let i = 0; i < mons.length; i++) {
+    for (let j = i + 1; j < mons.length; j++) {
+      monMin = Math.min(monMin, Math.abs(mons[i].x - mons[j].x) + Math.abs(mons[i].y - mons[j].y));
+    }
+  }
+  out.monsterSpreadMin = mons.length > 1 ? monMin : 6;
+
+  const fairnessScore = reachable.length >= 2
+    ? Math.max(0, 100 - out.fairnessStd * 16 - out.fairnessLead * 7)
+    : 0;
+  const fallbackPenalty = out.fallbackCount * 9;
+  const spreadScore = Math.min(100, out.monsterSpreadMin * 13);
+  const openScore = Math.max(0, Math.min(100,
+    (100 - Math.abs(out.floorRatio - 0.47) * 320) * 0.52 +
+    (100 - Math.abs(out.avgDegree - 2.3) * 64) * 0.48
+  ));
+
+  out.score = Math.max(0, Math.min(100,
+    fairnessScore * 0.45 +
+    spreadScore * 0.25 +
+    openScore * 0.3 -
+    fallbackPenalty
+  ));
+  out.score = +out.score.toFixed(2);
+  return out;
+}
+
+function shouldRejectCspResult(cspResult, mapQuality, constraints = null) {
+  const reasons = [];
+  const fallbackCount = cspResult?.stats?.fallbackCount ?? 0;
+  if (fallbackCount > CFG.CSP_MAX_FALLBACK_BEFORE_REROLL) {
+    reasons.push(`fallback=${fallbackCount}>${CFG.CSP_MAX_FALLBACK_BEFORE_REROLL}`);
+  }
+  if (mapQuality.fairnessStd > CFG.CSP_MAX_FAIRNESS_STD_BEFORE_REROLL) {
+    reasons.push(`fairStd=${mapQuality.fairnessStd}>${CFG.CSP_MAX_FAIRNESS_STD_BEFORE_REROLL}`);
+  }
+  if (constraints && mapQuality.fairnessLead > (constraints.treasureFairnessLeadMax + 1)) {
+    reasons.push(`fairLead=${mapQuality.fairnessLead}>${constraints.treasureFairnessLeadMax + 1}`);
+  }
+  if (mapQuality.score < CFG.CSP_MIN_MAP_QUALITY_SCORE) {
+    reasons.push(`quality=${mapQuality.score}<${CFG.CSP_MIN_MAP_QUALITY_SCORE}`);
+  }
+  return { reject: reasons.length > 0, reasons };
+}
+
+function generateAcceptedRoundLayout(seed, round, numPlayers, playerAnchors, opts = {}) {
+  const W = CFG.W, H = CFG.H;
+  const maxReroll = Math.max(0, CFG.CSP_MAX_REROLL_ATTEMPTS | 0);
+  const salt = opts.rngSalt ?? 0x1F2E3D;
+  const tag = opts.tag || 'round';
+  let best = null;
+  const rejectLogs = [];
+
+  for (let attempt = 0; attempt <= maxReroll; attempt++) {
+    const candSeed = (seed + attempt * 977 + round * 131) & 0xFFFFFF;
+    const grid = generateMaze(W, H, candSeed, round);
+    const gcResult = applyGraphColoring(grid, W, H);
+    const cspRng = mkRng(candSeed ^ salt);
+    const cspResult = cspSolve(grid, gcResult, round, numPlayers, cspRng, W, H, null, playerAnchors);
+    const quality = evaluateGeneratedMapQuality(grid, cspResult, numPlayers, W, H);
+    const rejectInfo = shouldRejectCspResult(cspResult, quality, cspResult.constraints);
+    const line = `[CSP-REROLL:${tag}] seed=${candSeed} try=${attempt + 1}/${maxReroll + 1} ` +
+      `fallback=${cspResult.stats?.fallbackCount ?? 0} fairStd=${quality.fairnessStd} q=${quality.score} ` +
+      `${rejectInfo.reject ? `REJECT(${rejectInfo.reasons.join(',')})` : 'ACCEPT'}`;
+
+    if (!best || quality.score > best.quality.score) {
+      best = { seed: candSeed, grid, gcResult, cspResult, quality, attempt, accepted: !rejectInfo.reject, rejectReasons: rejectInfo.reasons, logLine: line };
+    }
+
+    if (rejectInfo.reject) {
+      rejectLogs.push(line);
+      continue;
+    }
+
+    cspResult.log.unshift(line);
+    cspResult.log.unshift(`[CSP-REROLL:${tag}] acceptedSeed=${candSeed} rerollCount=${attempt}`);
+    return {
+      seed: candSeed,
+      grid,
+      gcResult,
+      cspResult,
+      quality,
+      rerollCount: attempt,
+      rejectLogs,
+      accepted: true,
+      acceptReason: 'threshold_pass',
+    };
+  }
+
+  if (!best) {
+    throw new Error('generateAcceptedRoundLayout: no candidate generated');
+  }
+
+  best.cspResult.log.unshift(...rejectLogs.slice(-Math.min(6, rejectLogs.length)));
+  best.cspResult.log.unshift(
+    `[CSP-REROLL:${tag}] fallback_accept bestSeed=${best.seed} q=${best.quality.score} rerollCount=${best.attempt}`
+  );
+  return {
+    seed: best.seed,
+    grid: best.grid,
+    gcResult: best.gcResult,
+    cspResult: best.cspResult,
+    quality: best.quality,
+    rerollCount: best.attempt,
+    rejectLogs,
+    accepted: false,
+    acceptReason: 'best_of_rejected',
+  };
+}
+
 /* ================================================================
    GAME INIT – khởi tạo ván mới
    ================================================================ */
 function initRound(seed, playersData, keepScore=false) {
   GS.seed = seed || (Date.now() & 0xFFFFFF);
-  GS.grid = generateMaze(CFG.W, CFG.H, GS.seed, GS.round);
-  updateChokeCache();
   GS.treasureHolder = -1;
   GS.traps = [];
   GS.running = true;
@@ -3082,19 +3240,33 @@ function initRound(seed, playersData, keepScore=false) {
     }
   }
 
-  // ── GRAPH COLORING: tính trước, cung cấp domain info cho CSP ──
-  GS.gcResult = applyGraphColoring(GS.grid, CFG.W, CFG.H);
-  GS.graphColorMap = GS.gcResult.colorMap;
-  buildInfluenceMap();
-
-  // ── CSP PLACEMENT: treasure + monsters + quiz cells ──
-  const cspRng = mkRng(GS.seed ^ 0x1F2E3D);
   const numP = Math.max(2, GS.players.length);
   const anchors = GS.players.slice(0, numP).map(p => ({ x: p.x, y: p.y }));
-  const cspResult = cspSolve(GS.grid, GS.gcResult, GS.round, numP, cspRng, CFG.W, CFG.H, null, anchors);
+  const layout = generateAcceptedRoundLayout(GS.seed, GS.round, numP, anchors, { rngSalt: 0x1F2E3D, tag: 'init' });
+  GS.seed = layout.seed;
+  GS.grid = layout.grid;
+  updateChokeCache();
+  GS.gcResult = layout.gcResult;
+  GS.graphColorMap = GS.gcResult.colorMap;
+  const cspResult = layout.cspResult;
   GS.cspLog = cspResult.log;
   GS.cspConstraints = cspResult.constraints;
-  GS.cspStats = cspResult.stats;
+  GS.cspStats = {
+    ...cspResult.stats,
+    rerollCount: layout.rerollCount,
+    acceptedSeed: layout.seed,
+    mapQualityScore: layout.quality.score,
+    mapFairnessStd: layout.quality.fairnessStd,
+    rejectCount: layout.rejectLogs.length,
+  };
+  GS.cspLayoutMeta = {
+    acceptedSeed: layout.seed,
+    rerollCount: layout.rerollCount,
+    accepted: layout.accepted,
+    acceptReason: layout.acceptReason,
+    quality: layout.quality,
+    rejectLogs: layout.rejectLogs,
+  };
 
   // Áp dụng kết quả CSP trước rồi mới tính fairness theo treasure mới của round.
   GS.treasure = cspResult.treasure;
@@ -3109,6 +3281,7 @@ function initRound(seed, playersData, keepScore=false) {
   }
   // Spawn monsters từ CSP
   GS.monsters = cspResult.monsters.map(pos => makeMonster(pos.x, pos.y));
+  buildInfluenceMap();
 
   // Cập nhật HUD
   updateHUD();
@@ -3188,7 +3361,12 @@ function beginGameplay() {
   // Nếu online host phát INIT
   if(GS.mode==='online' && GS.isHost) {
     mqttPublish({
-      type:'INIT', seed, round:GS.round,
+      type:'INIT', seed: GS.seed, round:GS.round,
+      cspMeta: GS.cspLayoutMeta ? {
+        rerollCount: GS.cspLayoutMeta.rerollCount,
+        acceptedSeed: GS.cspLayoutMeta.acceptedSeed,
+        mapQualityScore: GS.cspLayoutMeta.quality?.score ?? 0,
+      } : null,
       players: GS.players.map(p=>({name:p.name,score:p.score,idx:p.idx,clientId:p.clientId||''}))
     });
   }
@@ -3206,22 +3384,33 @@ function getCpuMs() {
 function regenerateMap() {
   // Seed mới hoàn toàn ngẫu nhiên
   GS.seed = (Date.now() ^ (Math.random()*0xFFFFFF|0)) & 0xFFFFFF;
-  GS.grid = generateMaze(CFG.W, CFG.H, GS.seed, GS.round);
-  updateChokeCache();
-
-  // Graph coloring trên map mới
-  GS.gcResult = applyGraphColoring(GS.grid, CFG.W, CFG.H);
-  GS.graphColorMap = GS.gcResult.colorMap;
-  buildInfluenceMap();
-
-  // CSP: đặt quiz + quái (bỏ qua treasure vì đang được cầm)
-  const cspRng = mkRng(GS.seed ^ 0xDEAD);
   const numP = Math.max(2, GS.players.length);
   const anchors = GS.players.slice(0, numP).map(p => ({ x: p.x, y: p.y }));
-  const cspResult = cspSolve(GS.grid, GS.gcResult, GS.round, numP, cspRng, CFG.W, CFG.H, null, anchors);
+  const layout = generateAcceptedRoundLayout(GS.seed, GS.round, numP, anchors, { rngSalt: 0xDEAD, tag: 'regen' });
+  GS.seed = layout.seed;
+  GS.grid = layout.grid;
+  updateChokeCache();
+  GS.gcResult = layout.gcResult;
+  GS.graphColorMap = GS.gcResult.colorMap;
+  const cspResult = layout.cspResult;
   GS.cspLog = cspResult.log;
   GS.cspConstraints = cspResult.constraints;
-  GS.cspStats = cspResult.stats;
+  GS.cspStats = {
+    ...cspResult.stats,
+    rerollCount: layout.rerollCount,
+    acceptedSeed: layout.seed,
+    mapQualityScore: layout.quality.score,
+    mapFairnessStd: layout.quality.fairnessStd,
+    rejectCount: layout.rejectLogs.length,
+  };
+  GS.cspLayoutMeta = {
+    acceptedSeed: layout.seed,
+    rerollCount: layout.rerollCount,
+    accepted: layout.accepted,
+    acceptReason: layout.acceptReason,
+    quality: layout.quality,
+    rejectLogs: layout.rejectLogs,
+  };
   if (GS.treasureHolder === -1) GS.treasure = cspResult.treasure;
   updateCspFairnessStats(numP);
 
@@ -3234,6 +3423,7 @@ function regenerateMap() {
   // Spawn lại quái vật
   GS.monsters = cspResult.monsters.map(pos => makeMonster(pos.x, pos.y));
   GS.traps = []; // xóa bẫy cũ (map đã thay)
+  buildInfluenceMap();
 
   // Kiểm tra người chơi bị kẹt trong tường (do map mới)
   // → dịch về ô floor gần nhất nếu bị kẹt
@@ -3254,7 +3444,15 @@ function regenerateMap() {
   showHudMsg('⚡ Bản đồ thay đổi! 🗺️', 2500);
   if(GS.mode==='online'&&GS.isHost) {
     // Gửi seed mới cho client (client tự tái tạo)
-    mqttPublish({type:'REGEN_MAP', seed: GS.seed});
+    mqttPublish({
+      type:'REGEN_MAP',
+      seed: GS.seed,
+      rerollCount: GS.cspLayoutMeta?.rerollCount ?? 0,
+      acceptedSeed: GS.cspLayoutMeta?.acceptedSeed ?? GS.seed,
+      mapQualityScore: GS.cspLayoutMeta?.quality?.score ?? 0,
+      fallbackCount: GS.cspStats?.fallbackCount ?? 0,
+      fairnessScore: GS.cspStats?.fairnessScore ?? 0,
+    });
     broadcastState();
   }
 }
@@ -5703,6 +5901,10 @@ function mapQualityReport() {
     '🧩 CSP prune P0': s.backtracks[0],
     '🧩 CSP prune P1': s.backtracks[1],
     '🧩 CSP prune P2': s.backtracks[2],
+    '🔁 CSP reroll count': s.rerollCount ?? 0,
+    '🌱 Accepted seed': s.acceptedSeed ?? GS.seed,
+    '🧪 Quality score': s.mapQualityScore ?? '--',
+    '🪫 Fallback count': s.fallbackCount ?? '--',
     '📦 Quiz cells trên map' : quizCnt,
     '👹 Monster spread min' : isFinite(monMinDist)?monMinDist:'N/A (≤1 quái)',
     '📐 Fairness σ (BFS)'   : s.fairnessStd??'N/A',
@@ -5713,7 +5915,9 @@ function mapQualityReport() {
     graphColoring: { numColors:gc.numColors, nodeCount:gc.nodeCount,
       distribution:[...gc.distribution], stdDev:gcStd },
     csp: { timeMs:s.timeMs, attempts:[...s.attempts], prunedConstraints:[...s.backtracks],
-      treasureOk:s.treasureOk, monstersPlaced:s.monstersPlaced, quizPlaced:s.quizPlaced },
+      treasureOk:s.treasureOk, monstersPlaced:s.monstersPlaced, quizPlaced:s.quizPlaced,
+      rerollCount:s.rerollCount ?? 0, acceptedSeed:s.acceptedSeed ?? GS.seed,
+      mapQualityScore:s.mapQualityScore ?? null, fallbackCount:s.fallbackCount ?? null },
     placement: { treasure:GS.treasure, quizCnt, monsterCount:GS.monsters.length,
       monsterMinSpread:isFinite(monMinDist)?monMinDist:0 },
     fairness: s.fairness ? { distances:baseDistMan, stdDev:s.fairnessStd } : null,
@@ -5910,17 +6114,18 @@ function updateDebugPanel(){
     const s = GS.cspStats;
     const ok = s?.treasureOk ?? false;
     document.getElementById('dbg-csp-status').textContent=
-      `${ok?'✓':'✗'} T=${ok} M=${s?.monstersPlaced??'?'}/${con.monsterCount} Q=${s?.quizPlaced??'?'}/${con.quizCount}`;
+      `${ok?'✓':'✗'} T=${ok} M=${s?.monstersPlaced??'?'}/${con.monsterCount} Q=${s?.quizPlaced??'?'}/${con.quizCount}` +
+      ` | reroll=${s?.rerollCount ?? 0}`;
     document.getElementById('dbg-csp-con').textContent=
       `R${GS.round}: tDist≥${con.treasureMinDistBase} mBase≥${con.monsterMinDistBase} ` +
-      `qSpread≥${con.quizMinSpread} m=${con.monsterCount} q=${con.quizCount}`;
+      `qSpread≥${con.quizMinSpread} m=${con.monsterCount} q=${con.quizCount} seed=${s?.acceptedSeed ?? GS.seed}`;
     // Hiệu năng solver
     if(s){
       document.getElementById('dbg-csp-stats').textContent=
-        `⏱${s.timeMs}ms | tries=[${s.attempts}] prune=[${s.backtracks}]`;
+        `⏱${s.timeMs}ms | tries=[${s.attempts}] prune=[${s.backtracks}] fb=${s.fallbackCount ?? 0} q=${s.mapQualityScore ?? '--'}`;
       if(s.fairness){
         const fStr=s.fairness.map(f=>`P${f.idx+1}:${f.dist<0?'∞':f.dist}`).join(' ');
-        document.getElementById('dbg-csp-fairness').textContent=`📐 BFS ${fStr} σ=${s.fairnessStd}`;
+        document.getElementById('dbg-csp-fairness').textContent=`📐 BFS ${fStr} σ=${s.fairnessStd} | fairScore=${s.fairnessScore ?? '--'}`;
       } else {
         document.getElementById('dbg-csp-fairness').textContent='Fairness: N/A';
       }
@@ -6260,6 +6465,20 @@ function handleInit(msg){
     GS.players.forEach((p,i)=>{ if(msg.players[i]) p.score=msg.players[i].score||0; });
   }
   initRound(msg.seed, msg.players, GS.round>1);
+  if (msg.cspMeta && GS.cspStats) {
+    GS.cspStats = {
+      ...GS.cspStats,
+      rerollCount: msg.cspMeta.rerollCount ?? GS.cspStats.rerollCount ?? 0,
+      acceptedSeed: msg.cspMeta.acceptedSeed ?? GS.seed,
+      mapQualityScore: msg.cspMeta.mapQualityScore ?? GS.cspStats.mapQualityScore ?? 0,
+    };
+    GS.cspLayoutMeta = {
+      ...(GS.cspLayoutMeta || {}),
+      rerollCount: GS.cspStats.rerollCount,
+      acceptedSeed: GS.cspStats.acceptedSeed,
+      quality: { ...(GS.cspLayoutMeta?.quality || {}), score: GS.cspStats.mapQualityScore },
+    };
+  }
   showScreen('game-screen');
   resizeCanvas();
   startRenderLoop();
@@ -6412,7 +6631,20 @@ function handleRegenMap(msg){
   const cspResult = cspSolve(GS.grid, GS.gcResult, GS.round, numP, cspRng, CFG.W, CFG.H, null, anchors);
   GS.cspLog = cspResult.log;
   GS.cspConstraints = cspResult.constraints;
-  GS.cspStats = cspResult.stats;
+  GS.cspStats = {
+    ...cspResult.stats,
+    rerollCount: msg.rerollCount ?? 0,
+    acceptedSeed: msg.acceptedSeed ?? msg.seed,
+    mapQualityScore: Number(msg.mapQualityScore ?? 0),
+  };
+  GS.cspLayoutMeta = {
+    acceptedSeed: GS.cspStats.acceptedSeed,
+    rerollCount: GS.cspStats.rerollCount,
+    accepted: true,
+    acceptReason: 'host_sync',
+    quality: { score: GS.cspStats.mapQualityScore },
+    rejectLogs: [],
+  };
   if (GS.treasureHolder === -1) GS.treasure = cspResult.treasure;
   updateCspFairnessStats(numP);
   for (const qp of cspResult.quizCells) {
