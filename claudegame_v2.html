@@ -97,23 +97,23 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
 /* ===================== HUD ===================== */
 #hud {
   width:100%; background:#0d0d22; border-top:1px solid var(--border);
-  padding:6px 12px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; flex-shrink:0;
+  padding:4px 8px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; flex-shrink:0;
 }
-.hud-item { display:flex; align-items:center; gap:6px; font-size:.85rem; }
-.score-box { display:flex; gap:10px; }
-.p-score { display:flex; align-items:center; gap:5px; font-size:.82rem; font-weight:600; }
-.p-score .dot { width:10px; height:10px; }
-#hud-goal { flex:1; text-align:right; font-size:.78rem; color:var(--accent); font-weight:700; }
+.hud-item { display:flex; align-items:center; gap:4px; font-size:.76rem; }
+.score-box { display:flex; gap:6px; }
+.p-score { display:flex; align-items:center; gap:4px; font-size:.74rem; font-weight:600; }
+.p-score .dot { width:8px; height:8px; }
+#hud-goal { flex:1; text-align:right; font-size:.68rem; color:var(--accent); font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:110px; }
 
 /* PvP HUD: skill cooldown + trạng thái + progress objective */
 #hud-pvp {
-  width:100%; display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+  width:100%; display:flex; gap:4px; align-items:center; flex-wrap:wrap;
 }
 .skill-chip {
-  min-width:88px; padding:4px 7px; border:1px solid #3a3a6d; border-radius:8px;
-  background:#171733; font-size:.72rem; line-height:1.2;
+  min-width:66px; padding:2px 5px; border:1px solid #3a3a6d; border-radius:6px;
+  background:#171733; font-size:.63rem; line-height:1.15;
 }
-.skill-chip b { color:#f7d36a; font-size:.74rem; }
+.skill-chip b { color:#f7d36a; font-size:.65rem; }
 .skill-chip.ready { border-color:#37a766; box-shadow:0 0 0 1px #37a76655 inset; }
 .skill-chip.cd { border-color:#754646; color:#d7b9b9; }
 .key-badge {
@@ -136,12 +136,12 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
   box-shadow:0 1px 0 #333388;
 }
 #hud-keybar .kb-sep { color:#2a3050; }
-#hud-states { font-size:.72rem; color:#a6c7ff; }
+#hud-states { font-size:.64rem; color:#a6c7ff; }
 #hud-objective {
-  display:flex; gap:8px; align-items:center; flex:1; min-width:180px;
+  display:flex; gap:5px; align-items:center; flex:1; min-width:140px;
 }
 .mini-bar {
-  position:relative; height:10px; border-radius:999px; overflow:hidden;
+  position:relative; height:7px; border-radius:999px; overflow:hidden;
   border:1px solid #3a3a6d; background:#101020; flex:1;
 }
 .mini-bar > span {
@@ -149,44 +149,49 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
 }
 #hud-contest-fill { background:linear-gradient(90deg,#ff6a4f,#ffbc55); }
 #hud-channel-fill { background:linear-gradient(90deg,#49b6ff,#60ffd3); }
-.mini-label { font-size:.68rem; color:#b8c9ef; min-width:58px; }
+.mini-label { font-size:.6rem; color:#b8c9ef; min-width:36px; }
 
 /* --- Energy & Zone HUD --- */
-#hud-energy-wrap { display:flex; align-items:center; gap:5px; }
-.energy-bar { width:72px; height:7px; border-radius:4px; background:#101020; border:1px solid #3a3a6d; overflow:hidden; }
+#hud-energy-wrap { display:flex; align-items:center; gap:3px; }
+.energy-bar { width:52px; height:6px; border-radius:4px; background:#101020; border:1px solid #3a3a6d; overflow:hidden; }
 .energy-fill { height:100%; width:100%; background:linear-gradient(90deg,#3fb0ff,#98f7ff); transition:width .12s linear; display:block; }
-#hud-zone { font-size:.7rem; padding:3px 8px; border-radius:6px; border:1px solid #3a3a6d; background:#171733; min-width:88px; text-align:center; white-space:nowrap; }
+#hud-zone { font-size:.63rem; padding:2px 5px; border-radius:5px; border:1px solid #3a3a6d; background:#171733; min-width:70px; text-align:center; white-space:nowrap; }
 #hud-zone.neutral { border-color:#555; color:#777; }
 #hud-zone.capturing { border-color:#f7d36a; color:#f7d36a; animation:pulse-zone .8s infinite; }
 #hud-zone.owned-me { border-color:#3fb0ff; color:#3fb0ff; }
 #hud-zone.owned-other { border-color:#f66; color:#f66; }
 @keyframes pulse-zone { 0%,100%{opacity:1} 50%{opacity:.65} }
 
-/* --- Touch act 3-col for Push --- */
-#touch-act.six { grid-template-columns:repeat(3,46px); }
-
 /* ===================== TOUCH CONTROLS ===================== */
+/* D-pad: overlay góc dưới-trái canvas */
 #touch-ctrl {
-  display:none; position:absolute; bottom:10px; right:10px; left:10px; z-index:10;
-  align-items:end; justify-content:space-between; pointer-events:none;
+  display:none; position:absolute; bottom:10px; left:8px; z-index:10;
+  pointer-events:none;
 }
 #touch-move {
-  display:grid; grid-template-columns:40px 40px 40px; gap:4px;
-  pointer-events:auto;
-}
-#touch-act {
-  display:grid; grid-template-columns:repeat(3,46px); gap:5px;
+  display:grid; grid-template-columns:54px 54px 54px; gap:7px;
   pointer-events:auto;
 }
 #touch-ctrl button {
-  width:40px; height:40px; padding:0; font-size:1.2rem; background:#ffffff22;
-  border:1px solid #ffffff44; border-radius:8px; color:#fff;
+  width:54px; height:54px; padding:0; font-size:1.4rem;
+  background:rgba(255,255,255,.15); border:1px solid rgba(255,255,255,.3);
+  border-radius:12px; color:#fff; backdrop-filter:blur(2px);
 }
+#touch-ctrl button:hover { background:rgba(255,255,255,.28); }
+/* Skill bar: nằm ngoài canvas, không che map */
+#touch-act {
+  display:none; flex-direction:row; gap:6px; overflow-x:auto;
+  -webkit-overflow-scrolling:touch; padding:5px 10px; width:100%;
+  background:rgba(8,8,22,0.92); border-top:1px solid #2a2a5a;
+  scrollbar-width:none; pointer-events:auto; flex-shrink:0;
+}
+#touch-act::-webkit-scrollbar { display:none; }
 #touch-act button {
-  width:46px; height:34px; font-size:.65rem; font-weight:700;
-  background:#1d2a4dcc; border-color:#7fb2ff77;
+  flex:0 0 auto; width:72px; height:46px; font-size:.6rem; font-weight:700;
+  background:rgba(22,36,70,.88); border:1px solid #7fb2ff99; border-radius:10px;
+  color:#fff; backdrop-filter:blur(2px); touch-action:none; padding:0 2px;
 }
-#touch-ctrl button:hover { background:#ffffff44; }
+#touch-act button:active { filter:brightness(1.3); }
 
 /* ===================== DEBUG PANEL ===================== */
 #debug-panel {
@@ -226,13 +231,18 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
 .winner-name { font-size:1.8rem; color:var(--accent); font-weight:700; }
 
 /* ===================== HUD MSG ===================== */
+/* Compact toast — top-right corner, không che map */
 #hud-msg {
-  position:fixed; top:70px; left:50%; transform:translateX(-50%);
-  background:#000c; border:1px solid var(--accent); border-radius:8px;
-  padding:8px 20px; font-size:.9rem; font-weight:700; color:var(--accent);
-  z-index:600; pointer-events:none; opacity:0; transition:opacity .3s;
+  position:fixed; top:8px; right:10px; left:auto; transform:translateY(-10px);
+  background:rgba(10,10,28,0.93); border:1px solid #4a4a80; border-radius:20px;
+  padding:5px 14px; font-size:.74rem; font-weight:600; color:#d0e4ff;
+  z-index:600; pointer-events:none; opacity:0;
+  transition:opacity .22s, transform .22s;
+  max-width:min(260px, 55vw); white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis;
+  box-shadow:0 2px 14px rgba(0,0,60,.55);
 }
-#hud-msg.show { opacity:1; }
+#hud-msg.show { opacity:1; transform:translateY(0); }
 
 /* ===================== SCROLLBAR ===================== */
 ::-webkit-scrollbar { width:4px; } ::-webkit-scrollbar-thumb { background:#2a2a5a; border-radius:2px; }
@@ -243,10 +253,6 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
 #game-screen, #canvas-wrap, #touch-ctrl { user-select: none; -webkit-user-select: none; }
 /* touch-action: none ngăn browser xử lý scroll/zoom khi chơi, giảm latency */
 #touch-ctrl button { touch-action: none; }
-/* Nút di chuyển: tăng lên 48x48 để dễ bấm hơn */
-#touch-move button { width:48px; height:48px; font-size:1.3rem; }
-/* Nút skill: tăng chiều cao để dễ chạm */
-#touch-act button { width:48px; height:40px; font-size:.62rem; }
 /* Ẩn keybar hint khi là touch device (set by JS checkMobile) */
 @media (hover: none) and (pointer: coarse) {
   #hud-keybar { display: none !important; }
@@ -285,11 +291,12 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
 .help-tag.tip { background:#1a3a1a; color:#50c060; }
 #btn-help-float {
   position:fixed; bottom:76px; right:10px; z-index:800;
-  width:36px; height:36px; border-radius:50%; padding:0;
-  font-size:1rem; background:#1e2a4a; border:1px solid #2a3a6a;
-  display:none; align-items:center; justify-content:center;
+  width:30px; height:30px; border-radius:50%; padding:0;
+  font-size:.85rem; background:#1a2240; border:1px solid #2a3a6a;
+  display:none; align-items:center; justify-content:center; opacity:.75;
 }
 #btn-help-float.visible { display:flex; }
+#btn-help-float:hover { opacity:1; }
 
 /* ===================== LOBBY REDESIGN ===================== */
 #lobby-screen {
@@ -424,10 +431,19 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
 }
 @media(max-width:480px) {
   h1 { font-size:1.5rem; } button.big { padding:10px 20px; font-size:1rem; }
-  #hud { padding:4px 8px; gap:8px; } .hud-item { font-size:.75rem; }
-  .skill-chip { min-width:78px; }
-  #touch-act { grid-template-columns:repeat(2,44px); gap:5px; }
-  #touch-act button { width:44px; height:34px; font-size:.64rem; }
+  /* HUD compact trên màn nhỏ */
+  #hud { padding:3px 6px; gap:4px; }
+  .hud-item { font-size:.7rem; }
+  .skill-chip { min-width:58px; font-size:.58rem; }
+  #hud-goal { max-width:80px; font-size:.62rem; }
+  .mini-label { min-width:28px; font-size:.55rem; }
+  .energy-bar { width:44px; }
+  #hud-zone { min-width:58px; font-size:.58rem; }
+  /* Touch controls compact trên màn nhỏ */
+  #touch-move { grid-template-columns:50px 50px 50px; gap:5px; }
+  #touch-ctrl button { width:50px; height:50px; font-size:1.3rem; }
+  #touch-act { gap:5px; padding:4px 8px; }
+  #touch-act button { width:62px; height:42px; font-size:.56rem; }
 }
 </style>
 </head>
@@ -593,16 +609,16 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
         <button ontouchstart="touchDir('down',event)" ontouchend="touchRelease('down',event)" onmousedown="touchDir('down',event)" onmouseup="touchRelease('down',event)">▼</button>
         <button ontouchstart="touchDir('right',event)" ontouchend="touchRelease('right',event)" onmousedown="touchDir('right',event)" onmouseup="touchRelease('right',event)">▶</button>
       </div>
-      <div id="touch-act">
-        <button ontouchstart="touchAction('dash',event)" onmousedown="touchAction('dash',event)">🏃Sprint</button>
-        <button ontouchstart="touchAction('shock',event)" onmousedown="touchAction('shock',event)">📡Radar</button>
-        <button ontouchstart="touchAction('shield',event)" onmousedown="touchAction('shield',event)">🛡Shield</button>
-        <button ontouchstart="touchAction('push',event)" onmousedown="touchAction('push',event)">🧹Clean</button>
-        <button ontouchstart="touchAction('lasso',event)" onmousedown="touchAction('lasso',event)">🧲Magnet</button>
-        <button ontouchstart="touchAction('trap',event)" onmousedown="touchAction('trap',event)">Trap</button>
-        <button ontouchstart="touchAction('interact',event)" onmousedown="touchAction('interact',event)">Interact</button>
-      </div>
     </div>
+  </div>
+  <div id="touch-act">
+    <button ontouchstart="touchAction('dash',event)" onmousedown="touchAction('dash',event)">🏃Tăng tốc</button>
+    <button ontouchstart="touchAction('shock',event)" onmousedown="touchAction('shock',event)">📡Ra-đa</button>
+    <button ontouchstart="touchAction('shield',event)" onmousedown="touchAction('shield',event)">🛡Khiên</button>
+    <button ontouchstart="touchAction('push',event)" onmousedown="touchAction('push',event)">🧹Dọn bẫy</button>
+    <button ontouchstart="touchAction('lasso',event)" onmousedown="touchAction('lasso',event)">🧲Nam châm</button>
+    <button ontouchstart="touchAction('trap',event)" onmousedown="touchAction('trap',event)">🪤Bẫy</button>
+    <button ontouchstart="touchAction('interact',event)" onmousedown="touchAction('interact',event)">👆T.tác</button>
   </div>
   <div id="hud-keybar">
     <kbd>WASD</kbd> di chuyển <span class="kb-sep">|</span>
@@ -617,11 +633,11 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
     <div class="hud-item">⏱ <span id="hud-timer">0</span>s</div>
     <div id="hud-goal">🏆 TÌM KHO BÁU VÀNG</div>
     <div id="hud-pvp">
-      <div class="skill-chip" id="skill-dash" data-key="Shift">🏃 Sprint<br><b>Sẵn</b></div>
-      <div class="skill-chip" id="skill-shock" data-key="Q">📡 Radar<br><b>Sẵn</b></div>
-      <div class="skill-chip" id="skill-shield" data-key="E">🛡 Shield<br><b>Sẵn</b></div>
-      <div class="skill-chip" id="skill-push" data-key="R">🧹 Clean<br><b>Sẵn</b></div>
-      <div class="skill-chip" id="skill-lasso" data-key="T">🧲 Magnet<br><b>Sẵn</b></div>
+      <div class="skill-chip" id="skill-dash" data-key="Shift">🏃 Tăng tốc<br><b>Sẵn</b></div>
+      <div class="skill-chip" id="skill-shock" data-key="Q">📡 Ra-đa<br><b>Sẵn</b></div>
+      <div class="skill-chip" id="skill-shield" data-key="E">🛡 Khiên<br><b>Sẵn</b></div>
+      <div class="skill-chip" id="skill-push" data-key="R">🧹 Dọn bẫy<br><b>Sẵn</b></div>
+      <div class="skill-chip" id="skill-lasso" data-key="T">🧲 Nam châm<br><b>Sẵn</b></div>
       <div id="hud-states">State: --</div>
       <div id="hud-energy-wrap">
         <span class="mini-label">⚡EN</span>
@@ -869,6 +885,7 @@ const CFG = {
   MAGNET_RANGE: 2,
   MAGNET_COOLDOWN_MS: 9000,
   MAGNET_ENERGY: 30,
+  MAGNET_STEAL_RANGE: 1,         // khoảng cách để kéo kho báu khỏi holder (adjacent)
   ENERGY_MAX: 100,
   ENERGY_REGEN_PER_TICK: 1,      // energy per regen tick
   ENERGY_REGEN_INTERVAL_MS: 80,  // regen interval → ~12.5/s at full speed
@@ -877,8 +894,10 @@ const CFG = {
   ZONE_CENTER_Y: 12,
   ZONE_RADIUS: 2,                // manhattan radius of the zone
   ZONE_CAPTURE_MS: 2000,         // time to capture uncontested
-  CONTEST_TIME_MS: 700,
-  CONTEST_FAIL_COOLDOWN_MS: 2000,
+  CONTEST_RANGE: 2,              // phạm vi bắt đầu và duy trì contest (tăng từ 1→2)
+  CONTEST_TIME_MS: 450,          // thời gian channel để cướp (giảm từ 700→450ms)
+  CONTEST_FAIL_COOLDOWN_MS: 1000, // cooldown khi contest thất bại (giảm từ 2000→1000ms)
+  CONTEST_HOLDER_SLOW_MS: 600,   // holder bị slow khi contest bắt đầu
   GOAL_CHANNEL_MS: 1000,
   TREASURE_DROP_GRACE_MS: 1000,
   ROUND_END_DELAY: 3500,         // ms chờ sau khi thắng ván
@@ -4142,7 +4161,9 @@ function tryStartContest(pidx) {
   if (now < (p.contestCdUntil || 0)) return false;
   if (GS.contest && GS.contest.active) return false;
   const holder = GS.players[GS.treasureHolder];
-  if (!holder || manhattan(p, holder) > 1 || hasShield(holder, now)) return false;
+  if (!holder || manhattan(p, holder) > CFG.CONTEST_RANGE || hasShield(holder, now)) return false;
+  // Slow holder khi contest bắt đầu (shield đã bị chặn ở trên)
+  holder.slowUntil = Math.max(holder.slowUntil || 0, now + CFG.CONTEST_HOLDER_SLOW_MS);
   GS.contest = {
     active: true,
     actorIdx: pidx,
@@ -4168,7 +4189,7 @@ function updateContestLogic() {
     cancelContest('actor_stunned', true);
     return;
   }
-  if (manhattan(actor, holder) > 1) {
+  if (manhattan(actor, holder) > CFG.CONTEST_RANGE) {
     cancelContest('out_of_range', true);
     return;
   }
@@ -4460,7 +4481,8 @@ const usePush = useCleanStep;
 
 /* ================================================================
    MAGNET – hút kho báu đang nằm trên sàn trong vòng MAGNET_RANGE ô.
-   Không thể dùng khi đang cầm kho báu. Không cướp từ người khác.
+   Steal-dislodge: nếu holder ở sát cạnh (MAGNET_STEAL_RANGE) và không có shield
+   → kéo kho báu rời khỏi holder, holder bị slow. Không autowin.
    ================================================================ */
 function useMagnet(pidx) {
   const now = Date.now();
@@ -4468,6 +4490,21 @@ function useMagnet(pidx) {
   if (!p || !canUseMagnet(p, now)) return false;
   p.lassoCdUntil = now + CFG.MAGNET_COOLDOWN_MS;
   drainEnergy(p, CFG.MAGNET_ENERGY);
+
+  // Steal-dislodge: kéo kho báu ra khỏi holder gần kề
+  if (GS.treasureHolder !== -1 && GS.treasureHolder !== pidx) {
+    const holder = GS.players[GS.treasureHolder];
+    if (holder && manhattan(p, holder) <= CFG.MAGNET_STEAL_RANGE && !hasShield(holder, now)) {
+      const tx = holder.x, ty = holder.y;
+      dropTreasureAtHolder(holder, 'magnet_steal');
+      holder.slowUntil = Math.max(holder.slowUntil || 0, now + CFG.CONTEST_HOLDER_SLOW_MS);
+      queueSyncEvent('skill_lasso', { playerIdx: pidx, stealDrop: true, from: holder.idx, tx, ty });
+      showHudMsg(`${p.name} kéo kho báu khỏi ${holder.name} bằng Nam châm! 🧲`);
+      vfxMagnet(p, tx, ty, true);
+      if (GS.mode === 'online' && GS.isHost) broadcastState();
+      return true;
+    }
+  }
 
   if (GS.treasureHolder === -1 && GS.treasure) {
     const d = manhattan(p, GS.treasure);
@@ -6386,16 +6423,19 @@ function tryCpuCombatSkills(cpu, state, target) {
   if (!cpu || GS.cpuDiff === 'easy') return false;
   const now = Date.now();
 
-  // Magnet: hút kho báu đang nằm gần (ưu tiên cao – không cần di chuyển thêm)
+  // Magnet: hút kho báu trên sàn HOẶC kéo từ holder kề bên
   if (canUseMagnet(cpu, now)) {
+    let doMagnet = false;
     if (GS.treasureHolder === -1 && GS.treasure) {
       const d = manhattan(cpu, GS.treasure);
-      if (d > 0 && d <= CFG.MAGNET_RANGE) {
-        if (useMagnet(cpu.idx)) {
-          GS.cpuDebug.reason += ' | cpu=magnet(treasure)';
-          return true;
-        }
-      }
+      if (d > 0 && d <= CFG.MAGNET_RANGE) doMagnet = true;
+    } else if (GS.treasureHolder !== -1 && GS.treasureHolder !== cpu.idx) {
+      const holder = GS.players[GS.treasureHolder];
+      if (holder && manhattan(cpu, holder) <= CFG.MAGNET_STEAL_RANGE && !hasShield(holder, now)) doMagnet = true;
+    }
+    if (doMagnet && useMagnet(cpu.idx)) {
+      GS.cpuDebug.reason += ' | cpu=magnet';
+      return true;
     }
   }
 
@@ -7568,11 +7608,11 @@ function updateHUD() {
         elx._cachedReady = ready;
       }
     };
-    syncSkill(skillEls.dash,   '🏃 Sprint',  dashLeft,  CFG.SPRINT_ENERGY);
-    syncSkill(skillEls.shock,  '📡 Radar',   shockLeft, CFG.RADAR_ENERGY);
-    syncSkill(skillEls.shield, '🛡 Shield',  shieldLeft, CFG.SHIELD_ENERGY);
-    syncSkill(skillEls.push,   '🧹 Clean',   pushLeft,  CFG.CLEANSTEP_ENERGY);
-    syncSkill(skillEls.lasso,  '🧲 Magnet',  lassoLeft, CFG.MAGNET_ENERGY);
+    syncSkill(skillEls.dash,   '🏃 Tăng tốc',  dashLeft,  CFG.SPRINT_ENERGY);
+    syncSkill(skillEls.shock,  '📡 Ra-đa',     shockLeft, CFG.RADAR_ENERGY);
+    syncSkill(skillEls.shield, '🛡 Khiên',     shieldLeft, CFG.SHIELD_ENERGY);
+    syncSkill(skillEls.push,   '🧹 Dọn bẫy',  pushLeft,  CFG.CLEANSTEP_ENERGY);
+    syncSkill(skillEls.lasso,  '🧲 Nam châm',  lassoLeft, CFG.MAGNET_ENERGY);
 
     const states = [];
     if (isStunned(me, now)) states.push('STUN');
@@ -7734,9 +7774,11 @@ function touchAction(action, evt) {
 // Hiện touch controls trên mobile
 function checkMobile() {
   const tc=document.getElementById('touch-ctrl');
+  const ta=document.getElementById('touch-act');
   const kb=document.getElementById('hud-keybar');
   if(IS_TOUCH_DEVICE){
     tc.style.display='flex';
+    if(ta) ta.style.display='flex';
     if(kb) kb.style.display='none'; // keybar chỉ dùng cho desktop keyboard
   }
 }
