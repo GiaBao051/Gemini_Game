@@ -902,7 +902,11 @@ const CFG = {
   TREASURE_DROP_GRACE_MS: 1000,
   ROUND_END_DELAY: 3500,         // ms chờ sau khi thắng ván
   BO3: 3,                        // số ván tối đa
-  MQTT_URL: 'wss://broker.emqx.io:8084/mqtt',
+  MQTT_URLS: [
+    'wss://broker.hivemq.com:8884/mqtt',     // HiveMQ public – WSS port 8884
+    'wss://test.mosquitto.org:8081/mqtt',     // Eclipse Mosquitto test
+    'wss://broker.emqx.io:8084/mqtt',         // EMQ X fallback
+  ],
   LOOP_ADD_RATIO: 0.12,          // tỉ lệ thêm vòng lặp vào maze
   DEAD_END_PASSES: 2,            // số lần giảm ngõ cụt
   CPU_EASY_MS: 900, CPU_NORMAL_MS: 550, CPU_HARD_MS: 280,
@@ -3505,6 +3509,12 @@ const GS = {
   netClientLastSeq: -1,
   netClientLastTs: 0,
   netClientLastEventId: 0,
+  netRoomPhase: 'lobby', // lobby | countdown | in_game
+  netMatchId: '',
+  netCountdownStartAt: 0,
+  netCountdownDone: false,
+  netPendingInit: null,
+  roomSyncAcks: {},
   netRegenVersion: 0,
   netLastAppliedRegenVersion: 0,
   contest: null, // {active, actorIdx, holderIdx, startAt, endAt}
@@ -3964,25 +3974,42 @@ function startOfflineGame() {
   showCountdown();
 }
 
-function showCountdown(autoStart = true) {
+function showCountdown(autoStart = true, startAtMs = Date.now(), onDone = null) {
   document.getElementById('cd-round').textContent = GS.round;
   showScreen('countdown-screen');
-  let c=5;
   const el=document.getElementById('countdown-num');
   const sub=document.getElementById('cd-sub');
-  el.textContent=c;
+  GS.netCountdownStartAt = startAtMs;
+  GS.netCountdownDone = false;
+  el.textContent='5';
   sub.textContent='Chuẩn bị...';
   clearInterval(GS._cdInterval);
-  GS._cdInterval=setInterval(()=>{
-    c--;
-    if(c>0){ el.textContent=c; }
-    else {
-      el.textContent='GO!';
-      sub.textContent=autoStart ? 'Bắt đầu!' : 'Đợi host đồng bộ...';
-      clearInterval(GS._cdInterval);
-      if (autoStart) setTimeout(()=>beginGameplay(), 600);
+  const totalMs = 5600; // 5 giây + GO!
+  const doneFn = onDone || (autoStart ? (() => beginGameplay()) : null);
+  const tick = () => {
+    const elapsed = Date.now() - startAtMs;
+    if (elapsed < 0) {
+      el.textContent = '5';
+      sub.textContent = 'Đợi host bắt đầu...';
+      return;
     }
-  },1000);
+    if (elapsed < 5000) {
+      const c = 5 - Math.floor(elapsed / 1000);
+      el.textContent = String(Math.max(1, c));
+      sub.textContent = 'Chuẩn bị...';
+      return;
+    }
+    if (elapsed < totalMs) {
+      el.textContent = 'GO!';
+      sub.textContent = autoStart ? 'Bắt đầu!' : 'Đợi host đồng bộ...';
+      return;
+    }
+    GS.netCountdownDone = true;
+    clearInterval(GS._cdInterval);
+    if (typeof doneFn === 'function') doneFn();
+  };
+  tick();
+  GS._cdInterval = setInterval(tick, 100);
 }
 
 function beginGameplay() {
@@ -4006,17 +4033,23 @@ function beginGameplay() {
   startRenderLoop();
   updateHUD();
   
-  // Nếu online host phát INIT
+  // Nếu online host phát INIT_GAME (và INIT legacy để tương thích)
   if(GS.mode==='online' && GS.isHost) {
-    mqttPublish({
-      type:'INIT', seed: GS.seed, round:GS.round,
+    const initPayload = {
+      seed: GS.seed,
+      round: GS.round,
+      matchId: GS.netMatchId || '',
+      countdownStartAt: GS.netCountdownStartAt || 0,
       cspMeta: GS.cspLayoutMeta ? {
         rerollCount: GS.cspLayoutMeta.rerollCount,
         acceptedSeed: GS.cspLayoutMeta.acceptedSeed,
         mapQualityScore: GS.cspLayoutMeta.quality?.score ?? 0,
       } : null,
       players: GS.players.map(p=>({name:p.name,score:p.score,idx:p.idx,clientId:p.clientId||''}))
-    });
+    };
+    mqttPublish({ type:'INIT_GAME', ...initPayload }, { qos: 1 });
+    mqttPublish({ type:'INIT', ...initPayload }, { qos: 1 });
+    console.log('[NET] host init_game sent', { round: GS.round, seed: GS.seed, matchId: GS.netMatchId || '' });
   }
 }
 
@@ -4762,10 +4795,18 @@ function showRoundEnd(winnerIdx) {
       showMatchEnd(matchWinner);
     } else {
       GS.round++;
+      const nextRoundStartAt = Date.now() + 1200;
       if(GS.mode==='online'&&GS.isHost){
-        mqttPublish({type:'NEXT_ROUND', round:GS.round});
+        GS.netRoomPhase = 'countdown';
+        GS.netCountdownStartAt = nextRoundStartAt;
+        mqttPublish({type:'NEXT_ROUND', round:GS.round, countdownStartAt: nextRoundStartAt, matchId: GS.netMatchId || ''}, { qos: 1 });
+        updateRoomBroadcast();
       }
-      showCountdown();
+      if (GS.mode==='online' && GS.isHost) {
+        showCountdown(false, nextRoundStartAt, ()=>beginGameplay());
+      } else {
+        showCountdown();
+      }
     }
   }, delay);
 }
@@ -8299,28 +8340,92 @@ function buildGraphColoring(){
    ================================================================ */
 let mqttClient=null, mqttConnected=false, mqttPing=0, pingStart=0;
 let roomPlayers=[];  // danh sách người chơi trong phòng (online)
+let mqttBrokerIdx = 0;
+let mqttErrorStreak = 0;
+
+function netLog(step, data = null) {
+  if (data == null) console.log(`[NET] ${step}`);
+  else console.log(`[NET] ${step}`, data);
+}
+
+function getRoomTopic() {
+  return `mazeduel/room/${GS.roomCode}`;
+}
+
+function getActiveMqttUrl() {
+  const urls = (Array.isArray(CFG.MQTT_URLS) && CFG.MQTT_URLS.length > 0)
+    ? CFG.MQTT_URLS
+    : [CFG.MQTT_URL];
+  return urls[mqttBrokerIdx % urls.length];
+}
+
+function rotateMqttBroker(reason = 'unknown') {
+  const urls = (Array.isArray(CFG.MQTT_URLS) && CFG.MQTT_URLS.length > 0)
+    ? CFG.MQTT_URLS
+    : [CFG.MQTT_URL];
+  if (urls.length <= 1) return;
+  mqttBrokerIdx = (mqttBrokerIdx + 1) % urls.length;
+  mqttErrorStreak = 0;
+  netLog('BROKER_ROTATE', { reason, next: getActiveMqttUrl() });
+  if (mqttClient) {
+    try { mqttClient.end(true); } catch(e) {}
+    mqttClient = null;
+  }
+  mqttConnected = false;
+  setTimeout(initMQTT, 500);
+}
 
 function initMQTT() {
   try {
-    mqttClient=mqtt.connect(CFG.MQTT_URL, {
+    const url = getActiveMqttUrl();
+    netLog('MQTT_CONNECT_TRY', { url });
+    mqttClient=mqtt.connect(url, {
       clientId: `mazeduel_${GS.clientId}`,
-      reconnectPeriod: 3000, connectTimeout: 10000,
+      reconnectPeriod: 2500,
+      connectTimeout: 12000,
+      clean: true,
+      keepalive: 30,
+      resubscribe: true,
     });
     mqttClient.on('connect', onMqttConnect);
     mqttClient.on('error', onMqttError);
     mqttClient.on('offline', onMqttOffline);
     mqttClient.on('message', onMqttMessage);
-    mqttClient.on('reconnect', ()=>setMqttStatus('conn','⚡ Đang kết nối lại...'));
+    mqttClient.on('reconnect', ()=>{
+      setMqttStatus('conn','⚡ Đang kết nối lại...');
+      netLog('MQTT_RECONNECTING', { url: getActiveMqttUrl() });
+    });
   } catch(e){ setMqttStatus('err','❌ Lỗi MQTT'); }
 }
 function onMqttConnect(){
   mqttConnected=true;
+  mqttErrorStreak = 0;
   setMqttStatus('ok','✅ Đã kết nối');
+  netLog('MQTT_CONNECTED', { url: getActiveMqttUrl(), roomCode: GS.roomCode || '' });
+  if (GS.roomCode) {
+    mqttSubscribe(getRoomTopic(), { qos: 1 }, ()=>{
+      netLog('ROOM_RESUBSCRIBED', { roomCode: GS.roomCode });
+      if (!GS.isHost) {
+        mqttPublish({ type:'JOIN', name:getPlayerName(), clientId:GS.clientId }, { qos: 1 });
+      } else {
+        updateRoomBroadcast();
+      }
+    });
+  }
   pingStart=Date.now();
   mqttClient.publish('mazeduel/ping',JSON.stringify({t:pingStart}));
 }
-function onMqttError(e){ setMqttStatus('err','❌ Lỗi: '+e.message?.substring(0,20)); }
-function onMqttOffline(){ mqttConnected=false; setMqttStatus('err','🔌 Mất kết nối'); }
+function onMqttError(e){
+  mqttErrorStreak++;
+  setMqttStatus('err','❌ Lỗi: '+e.message?.substring(0,20));
+  netLog('MQTT_ERROR', { message: e?.message || 'unknown', streak: mqttErrorStreak });
+  if (mqttErrorStreak >= 4) rotateMqttBroker('error_streak');
+}
+function onMqttOffline(){
+  mqttConnected=false;
+  setMqttStatus('err','🔌 Mất kết nối');
+  netLog('MQTT_OFFLINE');
+}
 function setMqttStatus(cls, txt){
   ['mqtt-status','mqtt-status2'].forEach(id=>{
     const el=document.getElementById(id);
@@ -8328,14 +8433,19 @@ function setMqttStatus(cls, txt){
     el.className=cls; el.textContent=txt;
   });
 }
-function mqttPublish(obj){
+function mqttPublish(obj, opts = {}){
   if(!mqttClient||!mqttConnected||!GS.roomCode) return;
-  try { mqttClient.publish(`mazeduel/room/${GS.roomCode}`, JSON.stringify(obj)); }
+  const publishOpts = { qos: opts.qos ?? 0, retain: !!opts.retain };
+  try { mqttClient.publish(getRoomTopic(), JSON.stringify(obj), publishOpts); }
   catch(e){}
 }
-function mqttSubscribe(topic){
+function mqttSubscribe(topic, opts = {}, cb = null){
   if(!mqttClient||!mqttConnected) return;
-  try { mqttClient.subscribe(topic); } catch(e){}
+  if (typeof opts === 'function') {
+    cb = opts;
+    opts = {};
+  }
+  try { mqttClient.subscribe(topic, { qos: opts.qos ?? 0 }, cb || (()=>{})); } catch(e){}
 }
 function mqttUnsubscribe(topic){
   if(!mqttClient) return;
@@ -8365,6 +8475,9 @@ function onMqttMessage(topic, raw){
   switch(msg.type){
     case 'JOIN':      handleJoin(msg); break;
     case 'ROOM_UPDATE': handleRoomUpdate(msg); break;
+    case 'PLAYER_SYNCED': handlePlayerSynced(msg); break;
+    case 'START_MATCH': handleStartMatch(msg); break;
+    case 'INIT_GAME': handleInitGame(msg); break;
     case 'REJECT':    handleReject(msg); break;
     case 'INIT':      handleInit(msg); break;
     case 'MOVE':      handleMove(msg); break;
@@ -8390,11 +8503,17 @@ function createRoom(){
   GS.roomCode=genCode();
   GS.isHost=true;
   GS.myIdx=0;
+  GS.mode='online';
+  GS.netRoomPhase='lobby';
+  GS.netMatchId='';
+  GS.netPendingInit=null;
+  GS.roomSyncAcks={ [GS.clientId]: Date.now() };
   roomPlayers=[{idx:0,name,clientId:GS.clientId,isHost:true}];
-  mqttSubscribe(`mazeduel/room/${GS.roomCode}`);
+  mqttSubscribe(getRoomTopic(), { qos: 1 });
   setupRoomScreen();
   showScreen('room-screen');
   document.getElementById('room-msg').textContent=`Bạn là host. Chia sẻ mã phòng: ${GS.roomCode}`;
+  netLog('HOST_CREATE_ROOM', { roomCode: GS.roomCode, host: GS.clientId });
 }
 
 // Vào phòng
@@ -8405,8 +8524,27 @@ function joinRoom(){
   const name=getPlayerName();
   GS.roomCode=code;
   GS.isHost=false;
-  mqttSubscribe(`mazeduel/room/${GS.roomCode}`);
-  mqttPublish({type:'JOIN',name,clientId:GS.clientId});
+  GS.mode='online';
+  GS.netRoomPhase='lobby';
+  GS.netMatchId='';
+  GS.netPendingInit=null;
+  // Subscribe trước, rồi mới gửi JOIN sau khi SUBACK xác nhận subscription
+  clearInterval(GS._joinRetryInterval);
+  if(!mqttClient||!mqttConnected) return;
+  mqttSubscribe(getRoomTopic(), { qos: 1 }, ()=>{
+    // SUBACK nhận được — giờ mới publish JOIN để đảm bảo không miss ROOM_UPDATE
+    mqttPublish({type:'JOIN',name,clientId:GS.clientId}, { qos: 1 });
+    netLog('CLIENT_JOIN_SENT', { roomCode: GS.roomCode, clientId: GS.clientId });
+    // Retry JOIN mỗi 3s nếu ROOM_UPDATE chưa tới (mất gói, broker chậm)
+    GS._joinRetryInterval = setInterval(()=>{
+      if(!GS.running && GS.roomCode && !GS.isHost && roomPlayers.length<2){
+        mqttPublish({type:'JOIN',name,clientId:GS.clientId}, { qos: 1 });
+        netLog('CLIENT_JOIN_RETRY', { roomCode: GS.roomCode });
+      } else {
+        clearInterval(GS._joinRetryInterval);
+      }
+    }, 3000);
+  });
   showScreen('room-screen');
   document.getElementById('room-msg').textContent='Đang tham gia phòng...';
 }
@@ -8415,6 +8553,7 @@ function joinRoom(){
 function handleJoin(msg){
   if(!GS.isHost) return;
   if(!msg.name || !msg.clientId) return;
+  netLog('HOST_RECV_JOIN', { clientId: msg.clientId, name: msg.name });
   if (findRoomPlayerByClientId(msg.clientId)) {
     updateRoomBroadcast();
     return;
@@ -8429,22 +8568,84 @@ function handleJoin(msg){
   }
   const idx=roomPlayers.length;
   roomPlayers.push({idx,name:sanitize(msg.name),clientId:msg.clientId,isHost:false});
+  GS.roomSyncAcks[msg.clientId] = 0;
   updateRoomBroadcast();
+}
+
+function handlePlayerSynced(msg){
+  if(!GS.isHost) return;
+  if(!msg?.clientId) return;
+  if (!findRoomPlayerByClientId(msg.clientId)) return;
+  GS.roomSyncAcks[msg.clientId] = Date.now();
+  netLog('HOST_RECV_PLAYER_SYNCED', {
+    clientId: msg.clientId,
+    phase: msg.phase || 'unknown',
+    matchId: msg.matchId || '',
+  });
 }
 
 // Host broadcast danh sách phòng
 function updateRoomBroadcast(){
   if(!GS.isHost) return;
-  mqttPublish({type:'ROOM_UPDATE',players:roomPlayers,roomCode:GS.roomCode});
+  mqttPublish({
+    type:'ROOM_UPDATE',
+    players:roomPlayers,
+    roomCode:GS.roomCode,
+    roomState: {
+      phase: GS.netRoomPhase || 'lobby',
+      matchId: GS.netMatchId || '',
+      countdownStartAt: GS.netCountdownStartAt || 0,
+      round: GS.round || 1,
+    }
+  }, { qos: 1 });
+  netLog('HOST_ROOM_UPDATE', {
+    roomCode: GS.roomCode,
+    phase: GS.netRoomPhase || 'lobby',
+    players: roomPlayers.length,
+  });
 }
 
 // Client nhận ROOM_UPDATE
 function handleRoomUpdate(msg){
   if(!msg.players) return;
+  clearInterval(GS._joinRetryInterval); // dừng retry khi đã vào phòng thành công
   roomPlayers=msg.players;
   const me = findRoomPlayerByClientId(GS.clientId);
   if (me) GS.myIdx = me.idx;
   else if (GS.isHost) GS.myIdx = 0;
+  if (!GS.isHost) {
+    mqttPublish({
+      type: 'PLAYER_SYNCED',
+      clientId: GS.clientId,
+      myIdx: GS.myIdx,
+      phase: GS.netRoomPhase || 'lobby',
+      matchId: GS.netMatchId || '',
+    }, { qos: 1 });
+  }
+  netLog('ROOM_UPDATE_RECV', {
+    players: roomPlayers.length,
+    myIdx: GS.myIdx,
+    roomState: msg.roomState || null,
+  });
+  if (!GS.isHost && msg.roomState?.phase === 'countdown') {
+    const roomState = msg.roomState;
+    const startAt = Number(roomState.countdownStartAt || 0) || (Date.now() + 800);
+    if (GS.netMatchId !== roomState.matchId) {
+      GS.netMatchId = roomState.matchId || '';
+      GS.netRoomPhase = 'countdown';
+      GS.netCountdownDone = false;
+      showCountdown(false, startAt, ()=>{
+        GS.netCountdownDone = true;
+        if (GS.netPendingInit) {
+          const pending = GS.netPendingInit;
+          GS.netPendingInit = null;
+          applyClientInit(pending);
+        } else {
+          document.getElementById('cd-sub').textContent='Đợi host đồng bộ...';
+        }
+      });
+    }
+  }
   renderRoomPlayers();
 }
 
@@ -8452,23 +8653,94 @@ function handleRoomUpdate(msg){
 function handleReject(msg){
   if (msg.targetClientId && msg.targetClientId !== GS.clientId) return;
   alert('Bị từ chối: '+(msg.reason||'Không vào được phòng'));
-  mqttUnsubscribe(`mazeduel/room/${GS.roomCode}`);
+  mqttUnsubscribe(getRoomTopic());
   GS.roomCode='';
+  GS.netRoomPhase='lobby';
+  GS.netMatchId='';
+  GS.netPendingInit=null;
   showScreen('lobby-screen');
 }
 
 // Host bắt đầu game
 function hostStartGame(){
   if(!GS.isHost||roomPlayers.length<2) return;
+  const now = Date.now();
+  const unsynced = roomPlayers
+    .filter(p => !p.isHost)
+    .filter(p => now - (GS.roomSyncAcks[p.clientId] || 0) > 20000);
+  if (unsynced.length > 0) {
+    showHudMsg('Client chưa sync xong, thử lại sau 1s');
+    updateRoomBroadcast();
+    netLog('HOST_START_BLOCKED_UNSYNCED', { unsynced: unsynced.map(p=>p.clientId) });
+    return;
+  }
   GS.players=roomPlayers.map(p=>makePlayer(p.idx,p.name,false,p.clientId||''));
   GS.round=1;
-  showCountdown();
+  GS.netMatchId = `m_${Date.now().toString(36)}_${ri(0,1e6).toString(36)}`;
+  GS.netRoomPhase = 'countdown';
+  GS.netCountdownStartAt = Date.now() + 1200;
+  GS.netCountdownDone = false;
+  GS.netPendingInit = null;
+  mqttPublish({
+    type:'START_MATCH',
+    matchId: GS.netMatchId,
+    countdownStartAt: GS.netCountdownStartAt,
+    round: GS.round,
+    players: GS.players.map(p=>({name:p.name,score:p.score,idx:p.idx,clientId:p.clientId||''})),
+  }, { qos: 1 });
+  updateRoomBroadcast();
+  netLog('HOST_START_MATCH', {
+    matchId: GS.netMatchId,
+    countdownStartAt: GS.netCountdownStartAt,
+    roomPlayers: roomPlayers.length,
+  });
+  showCountdown(false, GS.netCountdownStartAt, ()=>{
+    GS.netCountdownDone = true;
+    beginGameplay();
+  });
 }
 
-// Client nhận INIT
-function handleInit(msg){
+function handleStartMatch(msg){
+  if(GS.isHost) return;
+  if(!msg?.matchId) return;
+  GS.mode = 'online';
+  GS.netMatchId = msg.matchId;
+  GS.netRoomPhase = 'countdown';
+  GS.netCountdownDone = false;
+  GS.netPendingInit = null;
+  GS.round = msg.round || GS.round || 1;
+  if (Array.isArray(msg.players) && msg.players.length > 0) {
+    GS.players = msg.players.map(p=>makePlayer(p.idx,p.name,false,p.clientId||''));
+    GS.players.forEach((p,i)=>{ if(msg.players[i]) p.score=msg.players[i].score||0; });
+  }
+  const startAt = Number(msg.countdownStartAt || 0) || (Date.now() + 800);
+  netLog('CLIENT_RECV_START_MATCH', { matchId: msg.matchId, startAt, round: GS.round });
+  mqttPublish({
+    type:'PLAYER_SYNCED',
+    clientId: GS.clientId,
+    myIdx: GS.myIdx,
+    phase: 'countdown',
+    matchId: GS.netMatchId,
+  }, { qos: 1 });
+  showCountdown(false, startAt, ()=>{
+    GS.netCountdownDone = true;
+    if (GS.netPendingInit) {
+      const pending = GS.netPendingInit;
+      GS.netPendingInit = null;
+      applyClientInit(pending);
+    } else {
+      document.getElementById('cd-sub').textContent='Đợi host đồng bộ...';
+      netLog('CLIENT_WAITING_INIT', { matchId: GS.netMatchId });
+    }
+  });
+}
+
+// Client apply init payload
+function applyClientInit(msg){
   if(GS.isHost) return;
   if(!msg.seed) return;
+  GS.mode='online';
+  clearInterval(GS._joinRetryInterval);
   GS.netClientLastTick = -1;
   GS.netClientLastSeq = -1;
   GS.netClientLastTs = 0;
@@ -8494,9 +8766,41 @@ function handleInit(msg){
     };
   }
   showScreen('game-screen');
+  GS.netRoomPhase = 'in_game';
   resizeCanvas();
   startRenderLoop();
+  mqttPublish({
+    type:'PLAYER_SYNCED',
+    clientId: GS.clientId,
+    myIdx: GS.myIdx,
+    phase: 'in_game',
+    matchId: GS.netMatchId || '',
+  }, { qos: 1 });
+  netLog('CLIENT_BEGIN_GAMEPLAY', { round: GS.round, seed: msg.seed, matchId: msg.matchId || '' });
   showHudMsg(`Ván ${GS.round} bắt đầu!`);
+}
+
+function handleInitGame(msg){
+  if(GS.isHost) return;
+  if(!msg?.seed) return;
+  if (GS.netRoomPhase === 'in_game' && GS.running && msg.matchId && msg.matchId === GS.netMatchId) {
+    return;
+  }
+  if (msg.matchId && GS.netMatchId && msg.matchId !== GS.netMatchId) {
+    netLog('CLIENT_IGNORE_INIT_MISMATCH', { incoming: msg.matchId, expected: GS.netMatchId });
+    return;
+  }
+  if (GS.netRoomPhase === 'countdown' && !GS.netCountdownDone) {
+    GS.netPendingInit = msg;
+    netLog('CLIENT_DEFER_INIT_UNTIL_COUNTDOWN_DONE', { matchId: msg.matchId || '' });
+    return;
+  }
+  applyClientInit(msg);
+}
+
+// Legacy alias (để tương thích message INIT cũ)
+function handleInit(msg){
+  handleInitGame(msg);
 }
 
 // Client gửi MOVE, Host nhận MOVE
@@ -8533,6 +8837,7 @@ function handleSkillRequest(msg){
   if (skill === 'dash') ok = useDash(pidx);
   else if (skill === 'shock') ok = useShockPulse(pidx);
   else if (skill === 'shield') ok = useShield(pidx);
+  else if (skill === 'lasso') ok = useLasso(pidx);  // FIX: Nam châm missing
   else if (skill === 'push') ok = usePush(pidx);
   if (ok) broadcastState(0, `skill_${skill}`);
 }
@@ -8742,7 +9047,19 @@ function handleRoundEnd(msg){
 function handleNextRound(msg){
   if(GS.isHost) return;
   GS.round=msg.round||GS.round+1;
-  showCountdown(false);
+  GS.netRoomPhase = 'countdown';
+  GS.netCountdownDone = false;
+  const startAt = Number(msg.countdownStartAt || 0) || (Date.now() + 800);
+  showCountdown(false, startAt, ()=>{
+    GS.netCountdownDone = true;
+    if (GS.netPendingInit) {
+      const pending = GS.netPendingInit;
+      GS.netPendingInit = null;
+      applyClientInit(pending);
+    } else {
+      document.getElementById('cd-sub').textContent='Đợi host đồng bộ...';
+    }
+  });
 }
 
 function handleMatchEnd(msg){
