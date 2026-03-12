@@ -136,6 +136,30 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
   box-shadow:0 1px 0 #333388;
 }
 #hud-keybar .kb-sep { color:#2a3050; }
+
+/* Thanh gợi ý phím tắt thuật toán */
+#algo-hints {
+  position:fixed; top:10px; left:50%; transform:translateX(-50%);
+  font-size:.62rem; color:#90a8c8; display:flex; gap:10px;
+  align-items:center; background:rgba(8,8,28,0.88);
+  border:1px solid #3a3a6a; border-radius:8px; padding:4px 14px;
+  z-index:60; pointer-events:auto; white-space:nowrap;
+  box-shadow:0 2px 12px rgba(0,0,60,0.6); flex-wrap:wrap; justify-content:center;
+}
+#algo-hints kbd {
+  background:#1e1e44; border:1px solid #5555a0; border-radius:4px;
+  font-size:.6rem; padding:1px 5px; color:#c0d8ff; font-family:monospace;
+  box-shadow:0 1px 0 #333388;
+}
+#algo-hints .ah-btn {
+  cursor:pointer; display:flex; align-items:center; gap:3px;
+  padding:2px 6px; border-radius:5px; transition:background .15s;
+  border:1px solid transparent;
+}
+#algo-hints .ah-btn:hover { background:#1e2450; border-color:#5555a0; }
+#algo-hints .ah-btn.active { background:#0f2a18; border-color:#0f8; color:#0f8; }
+#algo-hints .ah-btn.active kbd { color:#0f8; border-color:#0f8; }
+#algo-hints .ah-sep { color:#2a3050; }
 #hud-states { font-size:.64rem; color:#a6c7ff; }
 #hud-objective {
   display:flex; gap:5px; align-items:center; flex:1; min-width:140px;
@@ -627,6 +651,25 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
     <kbd>Shift/Q/E/R/T</kbd> kỹ năng <span class="kb-sep">|</span>
     <kbd>H</kbd> help
   </div>
+  <!-- Thanh gợi ý phím tắt thuật toán -->
+  <div id="algo-hints">
+    <span style="color:#f7d36a;font-weight:700;margin-right:2px;">Thuật toán:</span>
+    <span class="ah-btn" id="ah-tab" onclick="toggleDebug();updateAlgoHints()" title="Hiện Debug Panel: AI state, CSP solver, Graph Coloring thông số thời gian thực">
+      <kbd>Tab</kbd> Debug Panel
+    </span>
+    <span class="ah-sep">|</span>
+    <span class="ah-btn" id="ah-g" onclick="toggleGraphColoring();updateAlgoHints()" title="Hiện overlay Graph Coloring: tô màu vùng bản đồ theo thuật toán tô màu đồ thị">
+      <kbd>G</kbd> Graph Coloring
+    </span>
+    <span class="ah-sep">|</span>
+    <span class="ah-btn" id="ah-i" onclick="toggleInfluenceOverlay();updateAlgoHints()" title="Hiện overlay Influence Map: bản đồ nhiệt nguy hiểm / cơ hội của CPU">
+      <kbd>I</kbd> Influence Map
+    </span>
+    <span class="ah-sep">|</span>
+    <span class="ah-btn" id="ah-c" onclick="toggleChokeOverlay();updateAlgoHints()" title="Hiện overlay điểm nghẽn (Choke Points): các ô được AI ưu tiên kiểm soát">
+      <kbd>C</kbd> Choke Points
+    </span>
+  </div>
   <div id="hud">
     <div class="hud-item">🎮 Ván <span id="hud-round">1</span>/3</div>
     <div class="score-box" id="score-box"></div>
@@ -907,10 +950,10 @@ const CFG = {
     'wss://test.mosquitto.org:8081/mqtt',     // Eclipse Mosquitto test
     'wss://broker.emqx.io:8084/mqtt',         // EMQ X fallback
   ],
-  NET_SNAPSHOT_MIN_INTERVAL_MS: 90,
-  NET_HOST_TICK_SNAPSHOT_MS: 170,
+  NET_SNAPSHOT_MIN_INTERVAL_MS: 80,
+  NET_HOST_TICK_SNAPSHOT_MS: 120,
   NET_MAP_SYNC_REQ_COOLDOWN_MS: 1500,
-  NET_MAX_PENDING_INPUTS: 24,
+  NET_MAX_PENDING_INPUTS: 10,
   LOOP_ADD_RATIO: 0.12,          // tỉ lệ thêm vòng lặp vào maze
   DEAD_END_PASSES: 2,            // số lần giảm ngõ cụt
   CPU_EASY_MS: 900, CPU_NORMAL_MS: 550, CPU_HARD_MS: 280,
@@ -4728,8 +4771,15 @@ function resolveMove(pidx) {
   const cell=GS.grid[ny*CFG.W+nx];
   
   // Quiz cell
-  if(cell===CFG.T_QUIZ && GS.mode==='offline') {
-    triggerQuiz(pidx);
+  if (cell === CFG.T_QUIZ) {
+    if (GS.mode === 'offline' || (GS.mode === 'online' && GS.isHost && pidx === GS.myIdx)) {
+      // Offline hoặc host chính mình: hiện quiz ngay
+      triggerQuiz(pidx);
+    } else if (GS.mode === 'online' && GS.isHost && pidx !== GS.myIdx) {
+      // Guest bước vào ô quiz: xóa ô trên host, notify client
+      GS.grid[ny * CFG.W + nx] = CFG.T_FLOOR;
+      mqttPublish({ type: 'QUIZ_TRIGGER', pidx, roomCode: GS.roomCode });
+    }
   }
   
   // Nhặt kho báu
@@ -4828,6 +4878,15 @@ function requestPlaceTrap(pidx) {
 function requestUseSkill(skill, pidx = GS.myIdx) {
   if (!GS.running) return false;
   if (GS.mode === 'online' && !GS.isHost) {
+    // Hiệu ứng tức thì trên màn hình client (optimistic VFX)
+    const p = GS.players[pidx];
+    if (p) {
+      if (skill === 'dash')   vfxSprint(p);
+      else if (skill === 'shock')  vfxRadar(p);
+      else if (skill === 'shield') vfxShield(p);
+      else if (skill === 'push')   vfxCleanStep(p, p.x, p.y, false);
+      else if (skill === 'lasso')  vfxMagnet(p, p.x, p.y, true);
+    }
     mqttPublish({ type:'SKILL_REQUEST', skill, pidx, clientId: GS.clientId });
     return true;
   }
@@ -7098,7 +7157,7 @@ function renderLoop(ts) {
   if(ts-fpsTime>=1000){ fps=fpsCounter; fpsCounter=0; fpsTime=ts; }
   
   // Cập nhật lerp
-  const lspd = 10;
+  const lspd = 12;
   for(const p of GS.players) p.lerpT=Math.min(1, p.lerpT+dt*lspd);
   for(const m of GS.monsters) m.lerpT=Math.min(1, m.lerpT+dt*lspd);
   
@@ -8170,6 +8229,7 @@ document.getElementById('help-overlay').addEventListener('click', e => {
 function toggleDebug(){
   debugOn=!debugOn;
   document.getElementById('debug-panel').classList.toggle('show',debugOn);
+  updateAlgoHints();
 }
 function updateDebugPanel(){
   if(!debugOn) return;
@@ -8443,14 +8503,27 @@ function toggleGraphColoring(){
   GS.graphColoring=!GS.graphColoring;
   if(GS.graphColoring) buildGraphColoring();
   showHudMsg(GS.graphColoring?'Graph coloring BẬT':'Graph coloring TẮT');
+  updateAlgoHints();
 }
 function toggleInfluenceOverlay(){
   INF_MAP.debugOverlay = !INF_MAP.debugOverlay;
   showHudMsg(INF_MAP.debugOverlay ? 'Influence overlay BẬT' : 'Influence overlay TẮT');
+  updateAlgoHints();
 }
 function toggleChokeOverlay(){
   CHOKE_CACHE.debugOverlay = !CHOKE_CACHE.debugOverlay;
   showHudMsg(CHOKE_CACHE.debugOverlay ? 'Choke overlay BẬT' : 'Choke overlay TẮT');
+  updateAlgoHints();
+}
+function updateAlgoHints(){
+  const dbEl = document.getElementById('ah-tab');
+  const gcEl = document.getElementById('ah-g');
+  const inEl = document.getElementById('ah-i');
+  const chEl = document.getElementById('ah-c');
+  if(dbEl) dbEl.classList.toggle('active', !!debugOn);
+  if(gcEl) gcEl.classList.toggle('active', !!GS.graphColoring);
+  if(inEl) inEl.classList.toggle('active', !!(INF_MAP && INF_MAP.debugOverlay));
+  if(chEl) chEl.classList.toggle('active', !!(CHOKE_CACHE && CHOKE_CACHE.debugOverlay));
 }
 // Kích hoạt debug overlay – tái dùng gcResult đã tính trong initRound
 function buildGraphColoring(){
@@ -8625,6 +8698,7 @@ function onMqttMessage(topic, raw){
     case 'REGEN_MAP': handleRegenMap(msg); break;
     case 'MAP_SYNC_REQUEST': handleMapSyncRequest(msg); break;
     case 'MAP_SYNC': handleMapSync(msg); break;
+    case 'QUIZ_TRIGGER': handleQuizTrigger(msg); break;
   }
 }
 
@@ -8945,10 +9019,6 @@ function handleMove(msg){
   if(pidx==null||!GS.players[pidx]) return;
   if(!isClientAuthorizedForIdx(clientId, pidx)) return;
   if(pidx===GS.myIdx) return; // host không xử lý move của mình qua mạng
-  const ackAdvanced = ack > (p.lastAckSeq || 0);
-  if (ackAdvanced) p.lastAckSeq = ack;
-  const now = Date.now();
-  p.pendingMoves = p.pendingMoves.filter(m => now - (m.ts || now) <= 2500);
   const p=GS.players[pidx];
   if(typeof dx!=='number'||typeof dy!=='number') return;
   doMovePlayer(pidx,dx,dy);
@@ -8969,6 +9039,10 @@ function handleMoveAck(msg){
   const p = GS.players[GS.myIdx];
   if(!p) return;
   const ack = Number(msg.ack || 0);
+  const ackAdvanced = ack > (p.lastAckSeq || 0);
+  if (ackAdvanced) p.lastAckSeq = ack;
+  const now = Date.now();
+  p.pendingMoves = p.pendingMoves.filter(m => now - (m.ts || now) <= 1200);
   if (ack > 0) {
     p.pendingMoves = p.pendingMoves.filter(m => m.seq > ack);
   }
@@ -9047,8 +9121,8 @@ function broadcastState(ackSeq = 0, reason = 'state_update'){
     reason,
     ack: ackSeq || 0,
     mapVersion: GS.mapVersion || 0,
-    mapHash: GS.mapHash || computeGridHash(GS.grid),
-    stateHash: `${GS.mapHash || ''}:${GS.netRegenVersion || 0}:${GS.treasureHolder}:${GS.round}`,
+    mapHash: isMoveTick ? undefined : (GS.mapHash || computeGridHash(GS.grid)),
+    stateHash: isMoveTick ? undefined : `${GS.mapHash || ''}:${GS.netRegenVersion || 0}:${GS.treasureHolder}:${GS.round}`,
     round: GS.round,
     seed: GS.seed,
     running: GS.running,
@@ -9066,7 +9140,7 @@ function broadcastState(ackSeq = 0, reason = 'state_update'){
       energy:p.energy??CFG.ENERGY_MAX,
       lastMoveDir:p.lastMoveDir||{dx:0,dy:0},
     })),
-    monsters: GS.monsters.map((m, i) => ({
+    monsters: isMoveTick ? undefined : GS.monsters.map((m, i) => ({
       idx: i,
       x: m.x,
       y: m.y,
@@ -9075,7 +9149,7 @@ function broadcastState(ackSeq = 0, reason = 'state_update'){
     })),
     treasure: GS.treasure,
     treasureHolder: GS.treasureHolder,
-    traps: GS.traps.map(t=>({owner:t.owner,x:t.x,y:t.y,createdAt:t.createdAt,ttl:t.ttl})),
+    traps: isMoveTick ? undefined : GS.traps.map(t=>({owner:t.owner,x:t.x,y:t.y,createdAt:t.createdAt,ttl:t.ttl})),
     contest: GS.contest ? { ...GS.contest } : null,
     goalChannel: GS.goalChannel ? { ...GS.goalChannel } : null,
     zone: GS.zone ? {
@@ -9126,7 +9200,7 @@ function handleUpdate(msg){
         const ackAdvanced = ack > (p.lastAckSeq || 0);
         if (ackAdvanced) p.lastAckSeq = ack;
         const now = Date.now();
-        p.pendingMoves = p.pendingMoves.filter(m => now - (m.ts || now) <= 2500);
+        p.pendingMoves = p.pendingMoves.filter(m => now - (m.ts || now) <= 1200);
         if (ack > 0) {
           p.pendingMoves=p.pendingMoves.filter(m=>m.seq>ack);
         }
@@ -9207,6 +9281,18 @@ function handleUpdate(msg){
       if (!evt || !Number.isFinite(evt.id)) continue;
       if (evt.id <= GS.netClientLastEventId) continue;
       GS.netClientLastEventId = evt.id;
+      // VFX cho skill của người chơi KHÁC (self đã có optimistic VFX)
+      const evtIdx = typeof evt.playerIdx === 'number' ? evt.playerIdx : -1;
+      if (evtIdx >= 0 && evtIdx !== GS.myIdx) {
+        const ep = GS.players[evtIdx];
+        if (ep) {
+          if (evt.type === 'skill_dash')   { vfxSprint(ep); showHudMsg(`${ep.name} dùng Sprint! 🏃`); }
+          else if (evt.type === 'skill_shock')  { vfxRadar(ep); showHudMsg(`${ep.name} bật Radar! 📡`); }
+          else if (evt.type === 'skill_shield') { vfxShield(ep); showHudMsg(`${ep.name} kích hoạt Shield! 🛡`); }
+          else if (evt.type === 'skill_push')   { vfxCleanStep(ep, ep.x, ep.y, !!evt.removedTrap); showHudMsg(`${ep.name} dùng CleanStep! 🧹`); }
+          else if (evt.type === 'skill_lasso')  { vfxMagnet(ep, evt.tx ?? ep.x, evt.ty ?? ep.y, !evt.miss); showHudMsg(`${ep.name} dùng Nam châm! 🧲`); }
+        }
+      }
     }
     GS.netRecentEvents = snap.events.slice(-10);
   }
@@ -9323,6 +9409,17 @@ function handleMapSync(msg){
     GS.netClientLastTs = Number(msg.serverTs ?? GS.netClientLastTs);
     showHudMsg('Đã đồng bộ lại map từ host', 1400);
   }
+}
+
+// Client nhận thông báo bước vào ô quiz từ host
+function handleQuizTrigger(msg) {
+  if (GS.isHost) return;
+  if (!GS.running) return;
+  if (msg.pidx !== GS.myIdx) return;
+  // Xóa ô quiz local (host đã xóa rồi)
+  const p = GS.players[GS.myIdx];
+  if (p && GS.grid) GS.grid[p.y * CFG.W + p.x] = CFG.T_FLOOR;
+  triggerQuiz(GS.myIdx);
 }
 
 // Client nhận tín hiệu host tái sinh map
